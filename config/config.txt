@@ -1,0 +1,4 @@
+workerThreads = 8
+numberOfFiles = 20
+storageCapacity = 100
+socketName = mysocket
