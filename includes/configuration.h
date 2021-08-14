@@ -3,6 +3,7 @@
 
 typedef struct sconfig {
     char *sockname;
+    char *logpath;
     unsigned long int num_workers,
                       num_files,
                       storage_capacity;
