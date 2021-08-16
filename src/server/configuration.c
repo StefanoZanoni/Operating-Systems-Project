@@ -9,6 +9,10 @@
 
 static FILE *config = NULL;
 
+/*
+    * this function is used to free the memory in case of error
+    * or at the end of configuration file reading
+*/
 void config_cleanup(cleanup_structure_t cstruct) {
 
     int i = 3;
@@ -39,7 +43,7 @@ void config_cleanup(cleanup_structure_t cstruct) {
     if (config)
         fclose(config);
 
-    free((char **) cstruct.pointers);
+    free( (char **) cstruct.pointers );
 }
 
 void print_config(server_configuration_t configuration) {
@@ -53,6 +57,11 @@ void print_config(server_configuration_t configuration) {
     }
 }
 
+/*
+    * this function is used to read the configuration file and save the configuration parameters 
+    * into the server_cofiguration structure.
+    * The configuration file is read line by line. 
+*/
 void get_config(char *path, server_configuration_t *configuration) {
 
     //I prepare the facility for any cleanup in the event of a fatal error
@@ -68,9 +77,12 @@ void get_config(char *path, server_configuration_t *configuration) {
     char *line = NULL;
     int n = 0;
 
+    //informations is used to store the string before the actual server configuration data 
     char *informations = calloc(BUFSIZE, sizeof(char));
     CHECK_EQ_EXIT(config_cleanup(cstruct), "calloc config.c", informations, NULL, "informations\n", "");
     cstruct.pointers[3] = informations;
+
+    //value is used to store acutal server configuration data
     char *value = calloc(BUFSIZE, sizeof(char));
     CHECK_EQ_EXIT(config_cleanup(cstruct), "calloc config.c", value, NULL, "value\n", "");
     cstruct.pointers[4] = value;
