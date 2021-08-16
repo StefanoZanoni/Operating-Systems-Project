@@ -9,12 +9,7 @@
 
 static atomic_fidx_t idx;
 
-void cache_cleanup() {
-
-
-}
-
-void cache_initialization(server_configuration_t config, hashtable_t *table, queue_t *queue) {
+int cache_initialization(server_configuration_t config, hashtable_t *table, queue_t *queue) {
 
 	queue->head = NULL;
 	queue->tail = NULL;
@@ -23,15 +18,18 @@ void cache_initialization(server_configuration_t config, hashtable_t *table, que
 	queue->max_files = config.num_files;
 	queue->curr_files = 0;
 	queue->num_ejected = 0;
-	pthread_mutex_init( &(queue->queue_mutex) );
+	pthread_mutex_init( &(queue->queue_mutex), NULL );
 
 	table->capacity = queue->max_files;
-	pthread_mutex_init( &(table->table_mutex) );
+	pthread_mutex_init( &(table->table_mutex), NULL );
 	table->files_references = calloc(table->capacity, sizeof(node_t*));
-	CHECK_EQ_EXIT(cache_cleanup(), "calloc cache.c", table->files_references, NULL, "table->files_references", "");
+	if (!table->files_references)
+		return -1;
 
-	pthread_mutex_init( &(idx.fidx_mutex) );
+	pthread_mutex_init( &(idx.fidx_mutex), NULL );
 	idx.index = 0;
+
+	return 0;
 }
 
 int is_queue_empty(queue_t *queue) {
@@ -71,11 +69,12 @@ int files_reached(queue_t *queue) {
 node_t* new_node(myfile_t f) {
 
 	node_t *temp = calloc(1, sizeof(node_t));
-	CHECK_EQ_EXIT(cache_cleanup(), "calloc cache.c", temp, NULL, "temp", "");
+	if (!temp)
+		return temp;
 
 	temp->prev = NULL;
 	temp->next = NULL;
-	temp->file = f;
+	*(temp->file) = f;
 
 	return temp;
 }
@@ -92,13 +91,14 @@ void dequeue(queue_t *queue) {
 		queue->head = NULL;
 
 	node_t *temp = queue->tail;
-	unsigned long int size_to_remove = temp->file.file_size;
+	unsigned long int size_to_remove = temp->file->file_size;
 	queue->tail = queue->tail->prev;
 
 	if (queue->tail)
 		queue->tail->next = NULL;
 
-	free(temp);
+	if (temp)
+		free(temp);
 
 	queue->curr_files--;
 	queue->curr_capacity -= size_to_remove;
@@ -106,7 +106,7 @@ void dequeue(queue_t *queue) {
 	pthread_mutex_unlock( &(queue->queue_mutex) );
 }
 
-void enqueue(queue_t *queue, hashtable_t *table, myfile_t file) {
+int enqueue(queue_t *queue, hashtable_t *table, myfile_t file) {
 
 	pthread_mutex_lock( &(table->table_mutex) );
 
@@ -118,11 +118,13 @@ void enqueue(queue_t *queue, hashtable_t *table, myfile_t file) {
 	pthread_mutex_unlock( &(table->table_mutex) );
 
 	node_t *temp = new_node(file);
+	if (!temp)
+		return -1;
 
 	pthread_mutex_lock( &(idx.fidx_mutex) );
 
-	temp->file->fidx = idx;
-	idx++;
+	temp->file->fidx = idx.index;
+	idx.index++;
 
 	pthread_mutex_unlock( &(idx.fidx_mutex) );
 
@@ -148,13 +150,15 @@ void enqueue(queue_t *queue, hashtable_t *table, myfile_t file) {
 	queue->curr_capacity += size_to_add;
 
 	pthread_mutex_unlock( &(queue->queue_mutex) );
+
+	return 0;
 }
 
 void reference_file(queue_t *queue, hashtable_t *table, myfile_t file) {
 
 	pthread_mutex_lock( &(table->table_mutex) );
 
-	node_t *ref = table->files_references[fil.fidx];
+	node_t *ref = table->files_references[file.fidx];
 
 	pthread_mutex_unlock( &(table->table_mutex) );
 
@@ -163,7 +167,7 @@ void reference_file(queue_t *queue, hashtable_t *table, myfile_t file) {
 
 	pthread_mutex_lock( &(queue->queue_mutex) );
 
-	else if (ref != queue->head) {
+	if (ref != queue->head) {
 
 		ref->prev->next = ref->next;
 		if (ref->next)
@@ -183,4 +187,27 @@ void reference_file(queue_t *queue, hashtable_t *table, myfile_t file) {
 	}
 
 	pthread_mutex_unlock( &(queue->queue_mutex) );
+}
+
+void free_queue(queue_t *queue) {
+
+	node_t *temp = queue->head;
+
+	while (temp) {
+
+		free(temp->file);
+		if (temp->prev)
+			free(temp->prev);
+		temp = temp->next;
+	}
+
+	free(temp->file);
+	free(temp);
+	pthread_mutex_destroy( &(queue->queue_mutex) );
+}
+
+void free_hashtable(hashtable_t *hashtable) {
+
+	free(hashtable->files_references);
+	pthread_mutex_destroy( &(hashtable->table_mutex) );
 }
