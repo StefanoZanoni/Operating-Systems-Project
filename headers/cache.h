@@ -1,5 +1,5 @@
-#ifndef PROGETTOSOL_DATASTRUCTURES_H
-#define PROGETTOSOL_DATASTRUCTURES_H
+#ifndef PROGETTOSOL_CACHE_H
+#define PROGETTOSOL_CACHE_H
 
 #include <stdio.h>
 #include <stdbool.h>
@@ -26,8 +26,8 @@ typedef struct my_file {
 
 typedef struct mynode {
 
-	struct node *prev,
-				*next;
+	struct mynode *prev,
+				  *next;
 	myfile_t *file;
 
 } node_t;
@@ -53,13 +53,15 @@ typedef struct hashtable {
 
 } hashtable_t;
 
-void cache_initialization(server_configuration_t config, hashtable_t *table, queue_t *queue);
+int cache_initialization(server_configuration_t config, hashtable_t *table, queue_t *queue);
 int is_queue_empty(queue_t *queue);
 int capacity_reached(queue_t *queue);
 int files_reached(queue_t *queue);
-node_t* new_node(myfile_t f);
+node_t* new_node(myfile_t *f);
 void dequeue(queue_t *queue);
-void enqueue(queue_t *queue, hashtable_t *table, myfile_t file);
-void enqueue(queue_t* queue, hashtable_t* table, myfile_t file);
+int enqueue(queue_t *queue, hashtable_t *table, myfile_t *file);
+void reference_file(queue_t *queue, hashtable_t *table, myfile_t *file);
+void free_queue(queue_t *queue);
+void free_hashtable(hashtable_t *hashtable);
 
-#endif //PROGETTOSOL_LOG_H
+#endif //PROGETTOSOL_CACHE_H
