@@ -13,10 +13,17 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include "../../headers/client.h"
 #include "../../headers/queue.h"
 #include "../../headers/api.h"
 #include "../../headers/parsing.h"
 #include "../../headers/commands_execution.h"
+
+int sockfd = -1;
+char *r_dir = NULL;
+char *w_dir = NULL;
+char *sockname = NULL;
+struct timespec time_to_wait;
 
 static void free_arg(commandline_arg_t* arg) {
 
@@ -42,21 +49,38 @@ static void free_arg(commandline_arg_t* arg) {
 */
 void client_cleanup(argsQueue_t *queue, commandline_arg_t *curr_arg) {
 
-	argnode_t *curr = queue->head;
+	if (queue) {
 
-	while(curr != NULL) {
+		argnode_t *curr = queue->head;
 
-		argnode_t *temp = curr;
-		curr = curr->next;	
-		free_arg(temp->arg);
-		free(temp->arg);
-		temp->arg = NULL;
-		free(temp);
-		temp = NULL;
+		while(curr != NULL) {
+
+			argnode_t *temp = curr;
+			curr = curr->next;	
+			free_arg(temp->arg);
+			free(temp->arg);
+			temp->arg = NULL;
+			free(temp);
+			temp = NULL;
+
+		}
 
 	}
 
-	free_arg(curr_arg);
+	if (curr_arg)
+		free_arg(curr_arg);
+
+	if (sockfd >= 0)
+		closeConnection(sockname);
+
+	if (r_dir)
+		free(r_dir);
+
+	if (w_dir)
+		free(w_dir);
+
+	if (sockname)
+		free(sockname);
 }
 
 int main(int argc, char **argv) {
@@ -69,24 +93,31 @@ int main(int argc, char **argv) {
 
 	clock_t begin = clock();
 
+	memset(&time_to_wait, 0, sizeof(struct timespec));
+
 	argsQueue_t queue;
 	queue_init(&queue);
 
 	commands_parsing(argc, argv, &queue);
 
-	print_queue(&queue);
-
 	queue_sorting(&queue);
-
-	print_queue(&queue);
 
 	while ( !is_queue_empty(queue) ) {
 
 		argnode_t *command_to_execute = NULL;
 		command_to_execute = dequeue(&queue);
-		execute_command(command_to_execute, &queue);
-		
+		int retval = execute_command(command_to_execute);
+		if (retval == -1) {
+			client_cleanup(&queue, NULL);
+			exit(EXIT_FAILURE);
+		}
+		else if (retval == 1){
+			client_cleanup(&queue, NULL);
+			break;
+		}
 	}
+
+	client_cleanup(&queue, NULL);
 
 	clock_t end = clock();
     double time_spent = (double) (end - begin) / CLOCKS_PER_SEC;
