@@ -2,13 +2,23 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
+#include <errno.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/un.h>
 
 #include "../../headers/commands_execution.h"
 #include "../../headers/queue.h"
+#include "../../headers/client.h"
+#include "../../headers/api.h"
+#include "../../headers/errors.h"
 
-static unsigned int set_stdout = 0;
-static unsigned int time_to_wait = 0;
+static int is_set_stdout = 0;
+static unsigned long int wbytes;
+static unsigned long int rbytes;
 
 static void free_command(argnode_t *command) {
 
@@ -35,9 +45,28 @@ static void free_command(argnode_t *command) {
 		}
 
 		free(command);
+		command = NULL;
 
 	}
 
+}
+
+static int args_counter(char **args) {
+
+	if (args) {
+
+		int i = 0;
+
+		while (args[i] != NULL) {
+
+			i++;
+
+		}
+
+		return i;
+	}
+
+	return 0;
 }
 
 void execute_h() {
@@ -85,119 +114,556 @@ void execute_h() {
    }
 }
    
-
-
-static void execute_f(char **args) {
-
+static int execute_f(char **args) {
 	
+	sockname = realpath(args[0], sockname);
+	if (!sockname)
+		return -1;
+
+	int msec = 100;
+	struct timespec abstime;
+	abstime.tv_sec = 3;
+	abstime.tv_nsec = 0;
+
+	return openConnection(sockname, msec, abstime);
 }
 
-static void execute_w(char **args) {
+static int execute_w(char *dirname, unsigned long int *count) {
 
-	
+	char *dirpath = NULL;
+	dirpath = realpath(dirname, dirpath);
+	if (!dirpath)
+		return -1;
+
+	DIR *dirp = opendir(dirpath);
+	if (!dirp)
+		return -1;
+
+	struct dirent *entry = NULL;
+
+	while (*count != 0 && (entry = readdir(dirp)) != NULL) {
+
+		char *temp = NULL;
+
+		if (entry->d_type == DT_DIR) {
+
+			temp = realpath(entry->d_name, temp);
+			if (!temp) 
+				return -1;
+
+			if (execute_w(temp, count) == -1)
+				return -1;
+
+		}
+		else if (entry->d_type == DT_REG) {
+			
+			temp = realpath(entry->d_name, temp);
+			if (!temp) 
+				return -1;
+
+			int retval = writeFile(temp, w_dir);
+			if (retval == -1)
+				return -1;
+
+			*count--;
+
+		}
+
+		free(temp);
+
+	}
+
+	return 0;
+
 }
 
-static void execute_W(char **args) {
+static int execute_W(char **args) {
 
-	
+	int num_args = args_counter(args);
+
+	int i = 0;
+
+	while (i < num_args) {
+
+		char *pathname = NULL;
+		pathname = realpath(args[i], pathname);
+		if (!pathname) 
+			return -1;
+
+		int retval = writeFile(pathname, w_dir);
+		if (retval == -1) 
+			return -1;
+
+		i++;
+		
+	}
+
+	return 0;
 }
 
-static void execute_D(char **args) {
+static int execute_D(char **args) {
 
-	
+	char *dirname = NULL;
+	dirname = realpath(args[0], dirname);
+	if (!dirname)
+		return -1;
+
+	char* const slash = "/";
+	size_t len = strlen(dirname) + 1;
+	dirname = realloc(dirname, len + 1);
+	strncat(dirname, slash, 1);
+
+	w_dir = dirname;
+
+	return 0;
+
 }
 
-static void execute_r(char **args) {
+static int execute_r(char **args) {
 
-	
+	int num_args = args_counter(args);
+
+	int i = 0;
+
+	while (i < num_args) {
+
+		char *pathname = NULL;
+		pathname = realpath(args[i], pathname);
+		if (!pathname)
+			return -1;
+
+		void *buf = NULL;
+		size_t size = 0;
+		int retval = readFile(pathname, &buf, &size);
+		if (retval == -1) {
+			free(pathname);
+			return -1;
+		}
+
+		rbytes += size;
+
+		if (buf)
+			free(buf);
+		free(pathname);
+
+		i++;
+		
+	}
+
+	return 0;
+
 }
 
-static void execute_R(char **args) {
+static int execute_R(char **args) {
 
-	
+	int N = 0;
+
+	if (args && args[0]) {
+
+		N = atoi(args[0]);
+		if (N == 0)
+		N = -1;
+
+	}
+	else 
+		N = -1;
+
+	if (readNFiles(N, r_dir) == -1)
+		return -1;
+
+	return 0;
 }
 
-static void execute_d(char **args) {
+static int execute_d(char **args) {
 
-	
+	if (args && args[0]) {
+
+		char *dirname = NULL;
+		dirname = realpath(args[0], dirname);
+		if (!dirname)
+			return -1;
+
+		char* const slash = "/";
+		size_t len = strlen(dirname) + 1;
+		dirname = realloc(dirname, len + 1);
+		strncat(dirname, slash, 1);
+
+		r_dir = dirname;
+		
+	}
+
+	return 0;
+
 }
 
 static void execute_t(char **args) {
 
-	
+	if (args && args[0]) {
+
+		unsigned long int msec = strtoul(args[0], NULL, 10);
+
+		if (msec != 0) {
+
+			time_to_wait.tv_sec = msec / 1000;
+			time_to_wait.tv_nsec = (msec % 1000) * 1000000;
+
+		}	
+	}
 }
 
-static void execute_l(char **args) {
+static int execute_l(char **args) {
 
-	
+	int num_args = args_counter(args);
+
+	int i = 0;
+
+	while (i < num_args) {
+
+		char *pathname = NULL;
+		pathname = realpath(args[i], pathname);
+		if (!pathname)
+			return -1;
+
+		int retval = lockFile(pathname);
+		if (retval == -1) {
+			free(pathname);
+			return -1;
+		}
+
+		free(pathname);
+
+		i++;
+		
+	}
+
+	return 0;
 }
 
-static void execute_u(char **args) {
+static int execute_u(char **args) {
 
-	
+	int num_args = args_counter(args);
+
+	int i = 0;
+
+	while (i < num_args) {
+
+		char *pathname = NULL;
+		pathname = realpath(args[i], pathname);
+		if (!pathname) 
+			return -1;
+
+		int retval = unlockFile(pathname);
+		if (retval == -1) {
+			free(pathname);
+			return -1;
+		}
+
+		free(pathname);
+
+		i++;
+		
+	}
+
+	return 0;
 }
 
-static void execute_c(char **args) {
+static int execute_c(char **args) {
 
-	
+	int num_args = args_counter(args);
+
+	int i = 0;
+
+	while (i < num_args) {
+
+		char *pathname = NULL;
+		pathname = realpath(args[i], pathname);
+		if (!pathname)
+			return -1;
+
+		int retval = removeFile(pathname);
+		if (retval == -1) {
+			free(pathname);
+			return -1;
+		}
+
+		free(pathname);
+
+		i++;
+		
+	}
+
+	return 0;
 }
 
 static void execute_p() {
 
-	
+	is_set_stdout = 1;
+
 }
 
-int execute_command(argnode_t *command, argsQueue_t *queue) {
+int execute_command(argnode_t *command) {
+
+	char* const success = "success";
+	char* const failure = "failure";
+	int errnocpy = 0;
+	wbytes = 0;
+	rbytes = 0;
 
 	switch (command->arg->option) {
 
 		case 'h': {
 
 			execute_h();
-			//cleanup(queue, NULL);
-			//exit(EXIT_SUCCESS);
+			free_command(command);
+			return 1;
 
 		} break;
 
 		case 'f': {
 
-			execute_f(command->arg->args);
+			errno = 0;
+			local_errno = 0;
+			int retval = execute_f(command->arg->args);
+			errnocpy = errno;
+
+			if (is_set_stdout) {
+
+				printf("-f %s | ", command->arg->args[0]);
+				printf("result: %s\n", !retval ? success : failure);
+
+			}
+
+			if (retval == -1) {
+
+				free_command(command);
+				errno = errnocpy;
+				my_perror("-f");
+				return -1;
+
+			}
 
 		} break;
 
 		case 'w': {
 
-			execute_w(command->arg->args);
+			errno = 0;
+			char *dirname = NULL;
+			dirname = realpath(command->arg->args[0], dirname);
+			if (!dirname) {
+				free(command);
+				my_perror("-w");
+				return 0;
+			}
+
+			unsigned long int count = 0;
+
+			if (command->arg->args[1]) {
+
+				count = strtoul(command->arg->args[1], NULL, 10);
+				if (count == 0)
+				count = -1;
+			}
+			else
+				count = -1;
+
+
+			errno = 0;
+			local_errno = 0;
+			int retval = execute_w(dirname, &count);
+			errnocpy = errno;
+
+			if (is_set_stdout) {
+
+				int i = 0;
+
+				printf("-w ");
+
+				while (command->arg->args[i] != NULL) {
+
+					if (command->arg->args[i + 1] == NULL)
+						printf("%s | ", command->arg->args[i]);
+					else
+						printf("%s,", command->arg->args[i]);
+
+					i++;
+
+				}
+
+				printf("result: %s\n", !retval ? success : failure);
+				printf("number of bytes written: %lu\n", wbytes);
+
+			}
+
+			if (retval == -1) {
+
+				errno = errnocpy;
+				my_perror("-w");
+
+			}
+
+			nanosleep(&time_to_wait, NULL);
 
 		} break;
 
 		case 'W': {
 
-			execute_W(command->arg->args);
+			errno = 0;
+			local_errno = 0;
+			int retval = execute_W(command->arg->args);
+			errnocpy = errno;
+
+			if (is_set_stdout) {
+
+				int i = 0;
+
+				printf("-W ");
+
+				while (command->arg->args[i] != NULL) {
+
+					if (command->arg->args[i + 1] == NULL)
+						printf("%s | ", command->arg->args[i]);
+					else
+						printf("%s,", command->arg->args[i]);
+
+					i++;
+
+				}
+
+				printf("result: %s\n", !retval ? success : failure);
+				printf("number of bytes written: %lu\n", wbytes);
+
+			}
+
+			if (retval == -1) {
+
+				errno = errnocpy;
+				my_perror("-W");
+
+			}
+
+			nanosleep(&time_to_wait, NULL);
 
 		} break;
 
 		case 'D': {
 
-			execute_D(command->arg->args);	
+			errno = 0;
+			local_errno = 0;
+			int retval = execute_D(command->arg->args);
+			errnocpy = errno;
+
+			if (is_set_stdout) {
+
+				printf("-D %s | ", command->arg->args[0]);
+				printf("result: %s\n", !retval ? success : failure);
+
+			}	
+
+			if (retval == -1) {
+
+				free_command(command);
+				errno = errnocpy;
+				my_perror("-D");
+				return -1;
+			}
 
 		} break;
 
 		case 'r': {
 
-			execute_r(command->arg->args);
+			errno = 0;
+			local_errno = 0;
+			int retval = execute_r(command->arg->args);
+			errnocpy = errno;
+
+			if (is_set_stdout) {
+
+				int i = 0;
+
+				printf("-r ");
+
+				while (command->arg->args[i] != NULL) {
+
+					if (command->arg->args[i + 1] == NULL)
+						printf("%s | ", command->arg->args[i]);
+					else
+						printf("%s,", command->arg->args[i]);
+
+					i++;
+
+				}
+
+				printf("result: %s\n", !retval ? success : failure);
+				printf("number of bytes read: %lu\n", rbytes);
+
+			}
+
+			if (retval == -1) {
+
+				errno = errnocpy;
+				my_perror("-r");
+
+			}
+
+			nanosleep(&time_to_wait, NULL);
 
 		} break;
 
 		case 'R': {
 
-			execute_R(command->arg->args);
+			errno = 0;
+			local_errno = 0;
+			int retval = execute_R(command->arg->args);
+			errnocpy = errno;
+
+			if (is_set_stdout) {
+
+				printf("-R ");
+
+				if (command->arg->args && command->arg->args[0] != NULL)
+					printf("%s | ", command->arg->args[0]);
+				else
+					printf("all files | ");
+
+				printf("result: %s\n", !retval ? success : failure);
+				printf("number of bytes read: %lu\n", rbytes);
+
+			}
+
+			if (retval == -1) {
+
+				errno = errnocpy;
+				my_perror("-R");
+
+			}
+
+			nanosleep(&time_to_wait, NULL);
 
 		} break;
 
 		case 'd': {
 
-			execute_d(command->arg->args);	
+			errno = 0;
+			local_errno = 0;
+			int retval = execute_d(command->arg->args);
+			errnocpy = errno;
+
+			if (is_set_stdout) {
+
+				printf("-d %s | ", command->arg->args[0]);
+
+				printf("result: %s\n", !retval ? success : failure);
+
+			}
+
+			if (retval == -1) {
+
+				free_command(command);
+				errno = errnocpy;
+				my_perror("-d");
+				return -1;
+
+			}
 
 		} break;
 
@@ -205,23 +671,133 @@ int execute_command(argnode_t *command, argsQueue_t *queue) {
 
 			execute_t(command->arg->args);	
 
+			if (is_set_stdout) {
+
+				if (command->arg->args && command->arg->args[0])
+					printf("-t %s | ", command->arg->args[0]);
+				else
+					printf("-t 0 | ");
+
+				printf("result: success\n");
+
+			}
+
 		} break;
 
 		case 'l': {
 
-			execute_l(command->arg->args);	
+			errno = 0;
+			local_errno = 0;
+			int retval = execute_l(command->arg->args);	
+			errnocpy = errno;
+
+			if (is_set_stdout) {
+
+				int i = 0;
+
+				printf("-l ");
+
+				while (command->arg->args[i] != NULL) {
+
+					if (command->arg->args[i + 1] == NULL)
+						printf("%s | ", command->arg->args[i]);
+					else
+						printf("%s,", command->arg->args[i]);
+
+					i++;
+
+				}
+
+				printf("result: %s\n", !retval ? success : failure);
+
+			}
+
+			if (retval == -1) {
+
+				errno = errnocpy;
+				my_perror("-l");
+
+			}
+
+			nanosleep(&time_to_wait, NULL);
 
 		} break;
 
 		case 'u': {
 
-			execute_u(command->arg->args);
+			errno = 0;
+			local_errno = 0;
+			int retval = execute_u(command->arg->args);
+			errnocpy = errno;
+
+			if (is_set_stdout) {
+
+				int i = 0;
+
+				printf("-u ");
+
+				while (command->arg->args[i] != NULL) {
+
+					if (command->arg->args[i + 1] == NULL)
+						printf("%s | ", command->arg->args[i]);
+					else
+						printf("%s,", command->arg->args[i]);
+
+					i++;
+
+				}
+
+				printf("result: %s\n", !retval ? success : failure);
+
+			}
+
+			if (retval == -1) {
+
+				errno = errnocpy;
+				my_perror("-u");
+
+			}
+
+			nanosleep(&time_to_wait, NULL);
 
 		} break;
 
 		case 'c': {
 
-			execute_c(command->arg->args);
+			errno = 0;
+			local_errno = 0;
+			int retval = execute_c(command->arg->args);
+			errnocpy = errno;
+
+			if (is_set_stdout) {
+
+				int i = 0;
+
+				printf("-c ");
+
+				while (command->arg->args[i] != NULL) {
+
+					if (command->arg->args[i + 1] == NULL)
+						printf("%s | ", command->arg->args[i]);
+					else
+						printf("%s,", command->arg->args[i]);
+
+					i++;
+
+				}
+
+				printf("result: %s\n", !retval ? success : failure);
+
+			}
+
+			if (retval == -1) {
+
+				errno = errnocpy;
+				my_perror("-c");
+
+			}
+
+			nanosleep(&time_to_wait, NULL);
 
 		} break;
 
