@@ -17,38 +17,28 @@
 #include "../../headers/errors.h"
 
 static int is_set_stdout = 0;
-static unsigned long int wbytes;
-static unsigned long int rbytes;
+static long int wbytes;
+static long int rbytes;
 
-static void free_command(argnode_t *command) {
+typedef struct flist {
 
-	if (command) {
+	char **files;
+	unsigned int pos;
+	unsigned int dim;
 
-		if (command->arg) {
+} flist_t;
 
-			if (command->arg->args) {
+static void free_command(commandline_arg_t command) {
 
-				int i = 0;
-				while (command->arg->args[i]) {
-					free(command->arg->args[i]);
-					command->arg->args[i++] = NULL;
-				}
+	if (command.args) {
 
-				free(command->arg->args);
-				command->arg->args = NULL;
+		int i = 0;
+		while (command.args[i]) 
+			free(command.args[i++]);
 
-			}
-
-			free(command->arg);
-			command->arg = NULL;
-
-		}
-
-		free(command);
-		command = NULL;
+		free(command.args);
 
 	}
-
 }
 
 static int args_counter(char **args) {
@@ -71,14 +61,16 @@ static int args_counter(char **args) {
 
 void execute_h() {
 
+	printf("\n");
+
 	char *help[][2] = {
-    			{"-h",               "visualizza help delle opzioni\n\n"},
-            {"-f <filename>",    "specifica il nome del socket AF_UNIX a cui connettersi\n\n"},
+    			{"-h",               "visualizza help delle opzioni.\n\n"},
+            {"-f <filename>",    "specifica il nome del socket AF_UNIX a cui connettersi.\n\n"},
             {"-w dirname[,n=0]", "invia al server i file nella cartella ‘dirname’, ovvero effettua una richiesta di scrittura al "
                                  "server per i file.\nSe la directory ‘dirname’ contiene altre directory, queste vengono visitate ricorsivamente "
-                                 "fino a quando non si leggono ‘n‘ file;\nse n=0 (o non è specificato) non c’è un limite superiore al numero di "
+                                 "fino a quando non si leggono ‘n‘ file; se n=0 (o non è specificato) non c’è un limite superiore al numero di "
                                  "file da inviare al server (tuttavia non è detto che il server possa scriverli tutti).\n\n"},
-            {"-W file1[,file2]", "lista di nomi di file da scrivere nel server separati da ‘,’\n\n"},
+            {"-W file1[,file2]", "lista di nomi di file da scrivere nel server separati da ‘,’.\n\n"},
             {"-D dirname",       "cartella in memoria secondaria dove vengono scritti (lato client) i file che il server rimuove a "
                                  "seguito di capacity misses (e che erano stati modificati da operazioni di scrittura) per servire le scritture "
                                  "richieste attraverso l’opzione ‘-w’ e ‘-W’.\nL’opzione ‘-D’ deve essere usata quindi congiuntamente "
@@ -88,18 +80,18 @@ void execute_h() {
                                  "‘send’ ci sia solo il file ‘pippo’.\nInfine supponiamo che il server, per poter scrivere nello storage il file "
                                  "‘pippo’ deve espellere il file ‘pluto’ e ‘minni’.\nAllora, al termine dell’operazione di scrittura, la cartella "
                                  "‘store’ conterrà sia il file ‘pluto’ che il file ‘minni’.\nSe l’opzione ‘-D’ non viene specificata, allora il server "
-                                 "invia sempre i file ‘pluto’ e ‘minni’ al client, ma questi vengono buttati via\n\n"},
-            {"-r file1[,file2]", "lista di nomi di file da leggere dal server separati da ‘,’ (esempio: -r pippo,pluto,minni)\n\n"},
+                                 "invia sempre i file ‘pluto’ e ‘minni’ al client, ma questi vengono buttati via.\n\n"},
+            {"-r file1[,file2]", "lista di nomi di file da leggere dal server separati da ‘,’ (esempio: -r pippo,pluto,minni).\n\n"},
             {"-R [n=0]",         "tale opzione permette di leggere ‘n’ file qualsiasi attualmente memorizzati nel server;\nse n=0 (o "
-                                 "non è specificato) allora vengono letti tutti i file presenti nel server\n\n"},
+                                 "non è specificato) allora vengono letti tutti i file presenti nel server.\n\n"},
             {"-d dirname",       "cartella in memoria secondaria dove scrivere i file letti dal server con l’opzione ‘-r’ o ‘-R’.\n"
                                  "L’opzione -d va usata congiuntamente a ‘-r’ o ‘-R’, altrimenti viene generato un errore;\nSe si utilizzano le "
-                                 "opzioni ‘-r’ o ‘-R’senza specificare l’opzione ‘-d’ i file letti non vengono memorizzati sul disco\n\n"},
+                                 "opzioni ‘-r’ o ‘-R’senza specificare l’opzione ‘-d’ i file letti non vengono memorizzati sul disco.\n\n"},
             {"-t time",          "tempo in millisecondi che intercorre tra l’invio di due richieste successive al server (se non "
-                                 "specificata si suppone -t 0, cioè non c’è alcun ritardo tra l’invio di due richieste consecutive)\n\n"},
-            {"-l file1[,file2]", "lista di nomi di file su cui acquisire la mutua esclusione\n\n"},
-            {"-u file1[,file2]", "lista di nomi di file su cui rilasciare la mutua esclusione\n\n"},
-            {"-c file1[,file2]", "lista di file da rimuovere dal server se presenti\n\n"},
+                                 "specificata si suppone -t 0, cioè non c’è alcun ritardo tra l’invio di due richieste consecutive).\n\n"},
+            {"-l file1[,file2]", "lista di nomi di file su cui acquisire la mutua esclusione.\n\n"},
+            {"-u file1[,file2]", "lista di nomi di file su cui rilasciare la mutua esclusione.\n\n"},
+            {"-c file1[,file2]", "lista di file da rimuovere dal server se presenti.\n\n"},
             {"-p",               "abilita le stampe sullo standard output per ogni operazione.\nLe stampe associate alle varie operazioni "
                                  "riportano almeno le seguenti informazioni: tipo di operazione, file di riferimento, esito e dove è rilevante i "
                                  "bytes letti o scritti.\n\n"},
@@ -125,53 +117,227 @@ static int execute_f(char **args) {
 	abstime.tv_sec = 3;
 	abstime.tv_nsec = 0;
 
-	return openConnection(sockname, msec, abstime);
+	int retval = openConnection(sockname, msec, abstime);
+	if (retval == -1) {
+		free(sockname);
+		return -1;
+	}
+
+	return 0;
 }
 
-static int execute_w(char *dirname, unsigned long int *count) {
+static int get_files(char *entry_path, int *num_to_write, flist_t *file_list) {
 
-	char *dirpath = NULL;
-	dirpath = realpath(dirname, dirpath);
-	if (!dirpath)
-		return -1;
-
-	DIR *dirp = opendir(dirpath);
+	DIR *dirp = opendir(entry_path);
 	if (!dirp)
 		return -1;
 
-	struct dirent *entry = NULL;
+	struct dirent *curr_entry = NULL;
 
-	while (*count != 0 && (entry = readdir(dirp)) != NULL) {
+	while (*num_to_write != 0 && (curr_entry = readdir(dirp)) != NULL) {
 
-		char *temp = NULL;
+		size_t entry_len = 0;
+		size_t curr_len = 0;
+		size_t total_len = 0;
+		int retval = 0;
 
-		if (entry->d_type == DT_DIR) {
+		if (curr_entry->d_type == DT_DIR) {
 
-			temp = realpath(entry->d_name, temp);
-			if (!temp) 
+			if (strcmp(curr_entry->d_name, ".") == 0 || strcmp(curr_entry->d_name, "..") == 0)
+         	continue;
+
+			char *dirpath = NULL;
+
+			entry_len = strlen(entry_path) + 1;
+			curr_len = strlen(curr_entry->d_name) + 1;
+			total_len = entry_len + 1 + curr_len;
+			dirpath = calloc(total_len, sizeof(char));
+			if (!dirpath) {
+				closedir(dirp);
 				return -1;
+			}
 
-			if (execute_w(temp, count) == -1)
+			snprintf(dirpath, total_len, "%s/%s", entry_path, curr_entry->d_name);
+
+			retval = get_files(dirpath, num_to_write, file_list);
+			if (retval == -1) {
+				free(dirpath);
+				closedir(dirp);
 				return -1;
+			}
+
+			free(dirpath);
 
 		}
-		else if (entry->d_type == DT_REG) {
+		else if (curr_entry->d_type == DT_REG) {
 			
-			temp = realpath(entry->d_name, temp);
-			if (!temp) 
-				return -1;
+			char *filepath = NULL;
 
-			int retval = writeFile(temp, w_dir);
-			if (retval == -1)
+			entry_len = strlen(entry_path) + 1;
+			curr_len = strlen(curr_entry->d_name) + 1;
+			total_len = entry_len + 1 + curr_len;
+			filepath = calloc(total_len, sizeof(char));
+			if (!filepath) {
+				closedir(dirp);
 				return -1;
+			}
+			
+			snprintf(filepath, total_len, "%s/%s", entry_path, curr_entry->d_name);
+			
+			// If I have to write the last free position in the file_list->files vector,
+			// I need to allocate more memory since I'm getting an undefined number of files
+			if (*num_to_write < 0 && file_list->pos == file_list->dim - 2) {
 
-			*count--;
+				file_list->dim += file_list->dim / 2;
+				char **temp = calloc(file_list->dim, sizeof(char*));
+				if (!temp) {
+					closedir(dirp);
+					free(filepath);
+					return -1;
+				}
+
+				int i = 0;
+				while (i < file_list->pos) {
+
+					size_t curr_len = strlen(file_list->files[i]) + 1;
+					temp[i] = calloc(curr_len, sizeof(char));
+					if (!temp[i]) {
+
+						closedir(dirp);
+						free(filepath);
+						int j = 0;
+						while (j < i) 
+							free(temp[j++]);
+						free(temp);
+
+						return -1;
+
+					}
+					memmove(temp[i], file_list->files[i], curr_len);
+					free(file_list->files[i]);
+					file_list->files[i] = NULL;
+					i++;
+
+				}
+
+				free(file_list->files);
+				file_list->files = temp;
+				temp = NULL;
+
+			}
+			
+			file_list->files[file_list->pos++] = strndup(filepath, total_len);
+			free(filepath);
+
+			*num_to_write = *num_to_write - 1;
 
 		}
-
-		free(temp);
 
 	}
+
+	closedir(dirp);
+
+	return 0;
+}
+
+static int execute_w(char **args) {
+
+	int num_to_write = 0;
+
+	// If the number of files to be sent is 0 or not specified
+	// I set num_to_write to -1 so since it is decremented by 1 
+	// at each iteration I can read all those in the directory.
+	if (args[1]) {
+
+		num_to_write = strtoul(args[1], NULL, 10);
+		if (num_to_write == 0)
+			num_to_write = -1;
+
+	}
+	else 
+		num_to_write = -1;
+
+	char *dirpath = NULL;
+	dirpath = realpath(args[0], dirpath);
+	if (!dirpath)
+		return -1;
+
+	flist_t file_list;
+	if (num_to_write > 0) {
+
+		file_list.dim = num_to_write + 1;
+		file_list.pos = 0;
+		file_list.files = calloc(file_list.dim, sizeof(char*));
+		if (!file_list.files) {
+			free(dirpath);
+			return -1;
+		}
+
+	}
+	else {
+
+		// I start by considering a maximum of 10 files to be sent.
+		// If the number of files in the directory is more than 10
+		// then I realloc files.
+		file_list.dim = 11;
+		file_list.pos = 0;
+		file_list.files = calloc(11, sizeof(char*));
+		if (!file_list.files) {
+			free(dirpath);
+			return -1;
+		}
+
+	}
+
+	int i = 0;
+
+	int retval = get_files(dirpath, &num_to_write, &file_list);
+	if (retval == -1) {
+
+		while (file_list.files[i] != NULL) 
+			free(file_list.files[i++]);
+
+		free(file_list.files);
+		free(dirpath);
+
+		return -1;
+
+	}
+
+	i = 0;
+
+	while(file_list.files[i] != NULL) {
+
+		if (writeFile(file_list.files[i], w_dir) == -1) {
+
+			// if there is an error with the file writing 
+			// then I free the memory of all of successive files
+			while (file_list.files[i] != NULL)
+				free(file_list.files[i++]);
+
+			free(file_list.files);
+			free(dirpath);
+
+			return -1;
+
+		}
+
+		// If the file has been successfully written to the server,
+		// I add its size to the amount of bytes written so far
+		FILE* f = fopen(file_list.files[i], "rb");
+		fseek(f, 0L, SEEK_END);
+		wbytes += ftell(f);
+		fclose(f);
+
+		// if the current file has been successfully written to the server
+		// then I can free its memory
+		free(file_list.files[i]);
+		file_list.files[i++] = NULL;
+
+	}
+
+	free(dirpath);
+	free(file_list.files);
 
 	return 0;
 
@@ -191,32 +357,25 @@ static int execute_W(char **args) {
 			return -1;
 
 		int retval = writeFile(pathname, w_dir);
-		if (retval == -1) 
+		if (retval == -1) {
+			free(pathname);
 			return -1;
+		}
+
+		// Only if the file has been successfully written to the server 
+		// I store total amount of bytes written in wbytes
+		FILE* f = fopen(pathname, "rb");
+		fseek(f, 0L, SEEK_END);
+		wbytes += ftell(f);
+		fclose(f);
+
+		free(pathname);
 
 		i++;
 		
 	}
 
 	return 0;
-}
-
-static int execute_D(char **args) {
-
-	char *dirname = NULL;
-	dirname = realpath(args[0], dirname);
-	if (!dirname)
-		return -1;
-
-	char* const slash = "/";
-	size_t len = strlen(dirname) + 1;
-	dirname = realloc(dirname, len + 1);
-	strncat(dirname, slash, 1);
-
-	w_dir = dirname;
-
-	return 0;
-
 }
 
 static int execute_r(char **args) {
@@ -242,8 +401,23 @@ static int execute_r(char **args) {
 
 		rbytes += size;
 
-		if (buf)
+		if (r_dir) {
+
+			FILE *f = fopen(pathname, "wb");
+			if (!f) {
+				free(pathname);
+				free(buf);
+				return -1;
+			}
+			fwrite((char*) buf, sizeof(char), size, f);
+			fclose(f);
+			
+		}
+
+		if (buf) {
 			free(buf);
+			buf = NULL;
+		}
 		free(pathname);
 
 		i++;
@@ -268,27 +442,33 @@ static int execute_R(char **args) {
 	else 
 		N = -1;
 
-	if (readNFiles(N, r_dir) == -1)
+	int retval = readNFiles(N, r_dir);
+	if (retval == -1)
 		return -1;
 
 	return 0;
 }
 
-static int execute_d(char **args) {
+static int execute_Dd(commandline_arg_t arg) {
 
-	if (args && args[0]) {
+	if (arg.args && arg.args[0]) {
 
 		char *dirname = NULL;
-		dirname = realpath(args[0], dirname);
+		dirname = realpath(arg.args[0], dirname);
 		if (!dirname)
 			return -1;
 
-		char* const slash = "/";
 		size_t len = strlen(dirname) + 1;
 		dirname = realloc(dirname, len + 1);
-		strncat(dirname, slash, 1);
+		if (!dirname)
+			return -1;
 
-		r_dir = dirname;
+		strcat(dirname, "/");
+
+		if (arg.option == 'd')
+			r_dir = dirname;
+		else 
+			w_dir = dirname;
 		
 	}
 
@@ -311,20 +491,28 @@ static void execute_t(char **args) {
 	}
 }
 
-static int execute_l(char **args) {
+static int execute_luc(commandline_arg_t arg) {
 
-	int num_args = args_counter(args);
+	int num_args = args_counter(arg.args);
 
 	int i = 0;
 
 	while (i < num_args) {
 
 		char *pathname = NULL;
-		pathname = realpath(args[i], pathname);
+		pathname = realpath(arg.args[i], pathname);
 		if (!pathname)
 			return -1;
 
-		int retval = lockFile(pathname);
+		int retval = 0;
+
+		if (arg.option == 'l')
+			retval = lockFile(pathname);
+		else if (arg.option == 'u')
+			retval = unlockFile(pathname);
+		else if (arg.option == 'c')
+			retval = removeFile(pathname);
+
 		if (retval == -1) {
 			free(pathname);
 			return -1;
@@ -339,77 +527,74 @@ static int execute_l(char **args) {
 	return 0;
 }
 
-static int execute_u(char **args) {
-
-	int num_args = args_counter(args);
-
-	int i = 0;
-
-	while (i < num_args) {
-
-		char *pathname = NULL;
-		pathname = realpath(args[i], pathname);
-		if (!pathname) 
-			return -1;
-
-		int retval = unlockFile(pathname);
-		if (retval == -1) {
-			free(pathname);
-			return -1;
-		}
-
-		free(pathname);
-
-		i++;
-		
-	}
-
-	return 0;
-}
-
-static int execute_c(char **args) {
-
-	int num_args = args_counter(args);
-
-	int i = 0;
-
-	while (i < num_args) {
-
-		char *pathname = NULL;
-		pathname = realpath(args[i], pathname);
-		if (!pathname)
-			return -1;
-
-		int retval = removeFile(pathname);
-		if (retval == -1) {
-			free(pathname);
-			return -1;
-		}
-
-		free(pathname);
-
-		i++;
-		
-	}
-
-	return 0;
-}
-
-static void execute_p() {
-
-	is_set_stdout = 1;
-
-}
-
-int execute_command(argnode_t *command) {
+static void print_execution_result(commandline_arg_t command, int retval) {
 
 	char* const success = "success";
 	char* const failure = "failure";
-	int errnocpy = 0;
-	wbytes = 0;
-	rbytes = 0;
 
-	switch (command->arg->option) {
+	int i = 0;
+
+	printf("\n-%c ", command.option);
+
+	while (command.args[i] != NULL) {
+
+		if (command.args[i + 1] == NULL)
+			printf("%s | ", command.args[i]);
+		else
+			printf("%s,", command.args[i]);
+
+		i++;
+
+	}
+
+	printf("result: %s\n", !retval ? success : failure);
+
+	if (command.option == 'w' || command.option == 'W') {
+
+		if (wbytes / 1000000 < 1) {
+			double KB = (double) wbytes / 1000;
+			if (!retval)
+				printf("number of bytes written: %.3lf kB\n\n", KB);
+			else
+				printf("number of bytes written: %.3lf kB\n", KB);
+		}
+		else if (wbytes / 1000000000 < 1) {
+			double MB = (double) wbytes / 1000000;
+			if (!retval)
+				printf("number of bytes written: %.3lf MB\n\n", MB);
+			else
+				printf("number of bytes written: %.3lf kB\n", MB);
+		}
+
+	}
+	else if (command.option == 'r') {
+
+		if (rbytes / 1000000 < 1) {
+			double KB = (double) rbytes / 1000;
+			if (!retval)
+				printf("number of bytes read: %.3lf kB\n\n", KB);
+			else
+				printf("number of bytes read: %.3lf kB\n", KB);
+		}
+		else if (rbytes / 1000000000 < 1) {
+			double MB = (double) rbytes / 1000000;
+			if (!retval)
+				printf("number of bytes read: %.3lf MB\n\n", MB);
+			else
+				printf("number of bytes read: %.3lf kB\n", MB);
+		}
+
+	}
+}
+
+int execute_command(commandline_arg_t command) {
+
+	int errnocpy = 0;
+	int retval = 0;
+	errno = 0;
+	local_errno = 0;
+
+	switch (command.option) {
 
 		case 'h': {
 
@@ -421,84 +606,34 @@ int execute_command(argnode_t *command) {
 
 		case 'f': {
 
-			errno = 0;
-			local_errno = 0;
-			int retval = execute_f(command->arg->args);
+			retval = execute_f(command.args);
 			errnocpy = errno;
 
-			if (is_set_stdout) {
-
-				printf("-f %s | ", command->arg->args[0]);
-				printf("result: %s\n", !retval ? success : failure);
-
-			}
+			if (is_set_stdout)
+				print_execution_result(command, retval);
 
 			if (retval == -1) {
-
-				free_command(command);
 				errno = errnocpy;
 				my_perror("-f");
+				free_command(command);
 				return -1;
-
 			}
 
 		} break;
 
 		case 'w': {
 
-			errno = 0;
-			char *dirname = NULL;
-			dirname = realpath(command->arg->args[0], dirname);
-			if (!dirname) {
-				free(command);
-				my_perror("-w");
-				return 0;
-			}
+			wbytes = 0;
 
-			unsigned long int count = 0;
-
-			if (command->arg->args[1]) {
-
-				count = strtoul(command->arg->args[1], NULL, 10);
-				if (count == 0)
-				count = -1;
-			}
-			else
-				count = -1;
-
-
-			errno = 0;
-			local_errno = 0;
-			int retval = execute_w(dirname, &count);
+			retval = execute_w(command.args);
 			errnocpy = errno;
 
-			if (is_set_stdout) {
-
-				int i = 0;
-
-				printf("-w ");
-
-				while (command->arg->args[i] != NULL) {
-
-					if (command->arg->args[i + 1] == NULL)
-						printf("%s | ", command->arg->args[i]);
-					else
-						printf("%s,", command->arg->args[i]);
-
-					i++;
-
-				}
-
-				printf("result: %s\n", !retval ? success : failure);
-				printf("number of bytes written: %lu\n", wbytes);
-
-			}
+			if (is_set_stdout)
+				print_execution_result(command, retval);
 
 			if (retval == -1) {
-
 				errno = errnocpy;
 				my_perror("-w");
-
 			}
 
 			nanosleep(&time_to_wait, NULL);
@@ -507,38 +642,17 @@ int execute_command(argnode_t *command) {
 
 		case 'W': {
 
-			errno = 0;
-			local_errno = 0;
-			int retval = execute_W(command->arg->args);
+			wbytes = 0;
+
+			retval = execute_W(command.args);
 			errnocpy = errno;
 
-			if (is_set_stdout) {
-
-				int i = 0;
-
-				printf("-W ");
-
-				while (command->arg->args[i] != NULL) {
-
-					if (command->arg->args[i + 1] == NULL)
-						printf("%s | ", command->arg->args[i]);
-					else
-						printf("%s,", command->arg->args[i]);
-
-					i++;
-
-				}
-
-				printf("result: %s\n", !retval ? success : failure);
-				printf("number of bytes written: %lu\n", wbytes);
-
-			}
+			if (is_set_stdout)
+				print_execution_result(command, retval);
 
 			if (retval == -1) {
-
 				errno = errnocpy;
 				my_perror("-W");
-
 			}
 
 			nanosleep(&time_to_wait, NULL);
@@ -547,23 +661,16 @@ int execute_command(argnode_t *command) {
 
 		case 'D': {
 
-			errno = 0;
-			local_errno = 0;
-			int retval = execute_D(command->arg->args);
+			retval = execute_Dd(command);
 			errnocpy = errno;
 
-			if (is_set_stdout) {
-
-				printf("-D %s | ", command->arg->args[0]);
-				printf("result: %s\n", !retval ? success : failure);
-
-			}	
+			if (is_set_stdout)
+				print_execution_result(command, retval);
 
 			if (retval == -1) {
-
-				free_command(command);
 				errno = errnocpy;
 				my_perror("-D");
+				free_command(command);
 				return -1;
 			}
 
@@ -571,38 +678,17 @@ int execute_command(argnode_t *command) {
 
 		case 'r': {
 
-			errno = 0;
-			local_errno = 0;
-			int retval = execute_r(command->arg->args);
+			rbytes = 0;
+
+			retval = execute_r(command.args);
 			errnocpy = errno;
 
-			if (is_set_stdout) {
-
-				int i = 0;
-
-				printf("-r ");
-
-				while (command->arg->args[i] != NULL) {
-
-					if (command->arg->args[i + 1] == NULL)
-						printf("%s | ", command->arg->args[i]);
-					else
-						printf("%s,", command->arg->args[i]);
-
-					i++;
-
-				}
-
-				printf("result: %s\n", !retval ? success : failure);
-				printf("number of bytes read: %lu\n", rbytes);
-
-			}
+			if (is_set_stdout)
+				print_execution_result(command, retval);
 
 			if (retval == -1) {
-
 				errno = errnocpy;
 				my_perror("-r");
-
 			}
 
 			nanosleep(&time_to_wait, NULL);
@@ -611,30 +697,17 @@ int execute_command(argnode_t *command) {
 
 		case 'R': {
 
-			errno = 0;
-			local_errno = 0;
-			int retval = execute_R(command->arg->args);
+			rbytes = 0;
+
+			retval = execute_R(command.args);
 			errnocpy = errno;
 
-			if (is_set_stdout) {
-
-				printf("-R ");
-
-				if (command->arg->args && command->arg->args[0] != NULL)
-					printf("%s | ", command->arg->args[0]);
-				else
-					printf("all files | ");
-
-				printf("result: %s\n", !retval ? success : failure);
-				printf("number of bytes read: %lu\n", rbytes);
-
-			}
+			if (is_set_stdout)
+				print_execution_result(command, retval);
 
 			if (retval == -1) {
-
 				errno = errnocpy;
 				my_perror("-R");
-
 			}
 
 			nanosleep(&time_to_wait, NULL);
@@ -643,74 +716,37 @@ int execute_command(argnode_t *command) {
 
 		case 'd': {
 
-			errno = 0;
-			local_errno = 0;
-			int retval = execute_d(command->arg->args);
+			retval = execute_Dd(command);
 			errnocpy = errno;
 
-			if (is_set_stdout) {
-
-				printf("-d %s | ", command->arg->args[0]);
-
-				printf("result: %s\n", !retval ? success : failure);
-
-			}
+			if (is_set_stdout)
+				print_execution_result(command, retval);
 
 			if (retval == -1) {
-
-				free_command(command);
 				errno = errnocpy;
 				my_perror("-d");
+				free_command(command);
 				return -1;
-
 			}
 
 		} break;
 
 		case 't': {
 
-			execute_t(command->arg->args);	
+			execute_t(command.args);	
 
-			if (is_set_stdout) {
-
-				if (command->arg->args && command->arg->args[0])
-					printf("-t %s | ", command->arg->args[0]);
-				else
-					printf("-t 0 | ");
-
-				printf("result: success\n");
-
-			}
+			if (is_set_stdout)
+				print_execution_result(command, retval);
 
 		} break;
 
 		case 'l': {
 
-			errno = 0;
-			local_errno = 0;
-			int retval = execute_l(command->arg->args);	
+			retval = execute_luc(command);	
 			errnocpy = errno;
 
-			if (is_set_stdout) {
-
-				int i = 0;
-
-				printf("-l ");
-
-				while (command->arg->args[i] != NULL) {
-
-					if (command->arg->args[i + 1] == NULL)
-						printf("%s | ", command->arg->args[i]);
-					else
-						printf("%s,", command->arg->args[i]);
-
-					i++;
-
-				}
-
-				printf("result: %s\n", !retval ? success : failure);
-
-			}
+			if (is_set_stdout)
+				print_execution_result(command, retval);
 
 			if (retval == -1) {
 
@@ -725,37 +761,15 @@ int execute_command(argnode_t *command) {
 
 		case 'u': {
 
-			errno = 0;
-			local_errno = 0;
-			int retval = execute_u(command->arg->args);
+			retval = execute_luc(command);
 			errnocpy = errno;
 
-			if (is_set_stdout) {
-
-				int i = 0;
-
-				printf("-u ");
-
-				while (command->arg->args[i] != NULL) {
-
-					if (command->arg->args[i + 1] == NULL)
-						printf("%s | ", command->arg->args[i]);
-					else
-						printf("%s,", command->arg->args[i]);
-
-					i++;
-
-				}
-
-				printf("result: %s\n", !retval ? success : failure);
-
-			}
+			if (is_set_stdout)
+				print_execution_result(command, retval);
 
 			if (retval == -1) {
-
 				errno = errnocpy;
 				my_perror("-u");
-
 			}
 
 			nanosleep(&time_to_wait, NULL);
@@ -764,37 +778,15 @@ int execute_command(argnode_t *command) {
 
 		case 'c': {
 
-			errno = 0;
-			local_errno = 0;
-			int retval = execute_c(command->arg->args);
+			retval = execute_luc(command);
 			errnocpy = errno;
 
-			if (is_set_stdout) {
-
-				int i = 0;
-
-				printf("-c ");
-
-				while (command->arg->args[i] != NULL) {
-
-					if (command->arg->args[i + 1] == NULL)
-						printf("%s | ", command->arg->args[i]);
-					else
-						printf("%s,", command->arg->args[i]);
-
-					i++;
-
-				}
-
-				printf("result: %s\n", !retval ? success : failure);
-
-			}
+			if (is_set_stdout)
+				print_execution_result(command, retval);
 
 			if (retval == -1) {
-
 				errno = errnocpy;
 				my_perror("-c");
-
 			}
 
 			nanosleep(&time_to_wait, NULL);
@@ -803,7 +795,7 @@ int execute_command(argnode_t *command) {
 
 		case 'p': {
 
-			execute_p();
+			is_set_stdout = 1;
 
 		} break;
 
