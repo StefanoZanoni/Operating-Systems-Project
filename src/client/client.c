@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -25,7 +26,7 @@ char *w_dir = NULL;
 char *sockname = NULL;
 struct timespec time_to_wait;
 
-static void free_arg(commandline_arg_t* arg) {
+static void free_arg(commandline_arg_t *arg) {
 
 	if (arg) {
 
@@ -45,7 +46,9 @@ static void free_arg(commandline_arg_t* arg) {
 }
 
 /*
-	* this function is used in case of error to clean up the queue and the terminal current argument
+	* This function is used either in case of error or in case of client termination
+	* to clean up: the queue, the terminal current argument, the reading directory,
+	* the writing directory, the sockname and to close the connection with the server.
 */
 void client_cleanup(argsQueue_t *queue, commandline_arg_t *curr_arg) {
 
@@ -67,20 +70,28 @@ void client_cleanup(argsQueue_t *queue, commandline_arg_t *curr_arg) {
 
 	}
 
-	if (curr_arg)
+	if (curr_arg) {
 		free_arg(curr_arg);
+		curr_arg = NULL;
+	}
 
-	if (sockfd >= 0)
+	if (sockfd >= 0) 
 		closeConnection(sockname);
 
-	if (r_dir)
+	if (r_dir) {
 		free(r_dir);
+		r_dir = NULL;
+	}
 
-	if (w_dir)
+	if (w_dir) {
 		free(w_dir);
+		w_dir = NULL;
+	}
 
-	if (sockname)
+	if (sockname) {
 		free(sockname);
+		sockname = NULL;
+	}
 }
 
 int main(int argc, char **argv) {
@@ -106,14 +117,16 @@ int main(int argc, char **argv) {
 
 		argnode_t *command_to_execute = NULL;
 		command_to_execute = dequeue(&queue);
-		int retval = execute_command(command_to_execute);
+		int retval = execute_command( *(command_to_execute->arg) );
+		free(command_to_execute->arg);
+		free(command_to_execute);
 		if (retval == -1) {
 			client_cleanup(&queue, NULL);
 			exit(EXIT_FAILURE);
 		}
 		else if (retval == 1){
 			client_cleanup(&queue, NULL);
-			break;
+			return 0;
 		}
 	}
 
@@ -121,7 +134,7 @@ int main(int argc, char **argv) {
 
 	clock_t end = clock();
     double time_spent = (double) (end - begin) / CLOCKS_PER_SEC;
-    printf("%lf\n", time_spent);
+    printf("%lf\n\n", time_spent);
 
 	return 0;
 }
