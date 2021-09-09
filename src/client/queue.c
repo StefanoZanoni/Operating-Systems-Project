@@ -49,24 +49,24 @@ static argnode_t* opt_research(argsQueue_t *queue, char opt) {
 	return NULL;
 }
 
-// -h -> -p -> -t -> -f -> -D -> -d -> any other option
+// -h -> -p -> -f -> -t -> -D -> -d -> any other option
 void queue_sorting(argsQueue_t *queue) {
 
 	argnode_t *to_move = NULL;
 
 	if ( (to_move = opt_research(queue, 'd')) ) 
-		if (!is_at_the_head(queue, to_move))
+		if (!is_at_the_head(queue, to_move)) 
 			move_to_the_head(queue, to_move);
 
 	if ( (to_move = opt_research(queue, 'D')) ) 
 		if (!is_at_the_head(queue, to_move))
 			move_to_the_head(queue, to_move);
-	
-	if ( (to_move = opt_research(queue, 'f')) )
+
+	if ( (to_move = opt_research(queue, 't')) )
 		if (!is_at_the_head(queue, to_move))
 			move_to_the_head(queue, to_move);
 
-	if ( (to_move = opt_research(queue, 't')) )
+	if ( (to_move = opt_research(queue, 'f')) )
 		if (!is_at_the_head(queue, to_move))
 			move_to_the_head(queue, to_move);
 
@@ -87,15 +87,17 @@ void queue_sorting(argsQueue_t *queue) {
 			fprintf(stderr, "Warning: no folder was specified to store the files read by the server.\nRead files will not be stored on disk.\n");
 }
 
-void print_queue(argsQueue_t *queue) {
+void print_queue(argsQueue_t queue) {
 
-	argnode_t *curr = queue->head;
+	if (queue.head == NULL)
+		fprintf(stderr, "Empty queue\n");
+
+	argnode_t *curr = queue.head;
 
 	while (curr != NULL) {
 
 		if (curr->arg != NULL) {
 
-			printf("w=%d r=%d ", curr->arg->wbytes, curr->arg->rbytes);
 			printf("-%c ", curr->arg->option);
 
 			if (curr->arg->args != NULL) {
