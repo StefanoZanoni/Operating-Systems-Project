@@ -10,11 +10,11 @@
 #include <sys/types.h>
 #include <sys/un.h>
 
-#include "../../headers/commands_execution.h"
-#include "../../headers/queue.h"
-#include "../../headers/client.h"
-#include "../../headers/api.h"
-#include "../../headers/errors.h"
+#include "../../headers/client/commands_execution.h"
+#include "../../headers/client/queue.h"
+#include "../../headers/client/client.h"
+#include ../API/api.h"
+#include "../../headers/client/errors.h"
 
 static int is_set_stdout = 0;
 static long int wbytes;
