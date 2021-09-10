@@ -3,9 +3,9 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "../../headers/util.h"
-#include "../../headers/queue.h"
-#include "../../headers/client.h"
+#include "../../common/util.h"
+#include "../../headers/client/queue.h"
+#include "../../headers/client/client.h"
 
 /*
 	* this function is used to read the arguments of the current option and divide them
