@@ -14,11 +14,11 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#include "../../headers/client.h"
-#include "../../headers/queue.h"
-#include "../../headers/api.h"
-#include "../../headers/parsing.h"
-#include "../../headers/commands_execution.h"
+#include "../../headers/client/client.h"
+#include "../../headers/client/queue.h"
+#include "../API/api.h"
+#include "../../headers/client/parsing.h"
+#include "../../headers/client/commands_execution.h"
 
 int sockfd = -1;
 char *r_dir = NULL;
