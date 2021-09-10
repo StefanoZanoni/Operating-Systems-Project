@@ -4,9 +4,9 @@
 #include <unistd.h>
 #include <string.h>
 
-#include "../../headers/util.h"
-#include "../../headers/queue.h"
-#include "../../headers/client.h"
+#include "../../common/util.h"
+#include "../../headers/client/queue.h"
+#include "../../headers/client/client.h"
 
 static void move_to_the_head(argsQueue_t *queue, argnode_t *node) {
 
