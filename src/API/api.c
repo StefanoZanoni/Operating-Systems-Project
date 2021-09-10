@@ -5,11 +5,11 @@
 #include <time.h>
 #include <sys/socket.h>
 
-#include "../../headers/conn.h"
-#include "../../headers/api.h"
-#include "../../headers/client.h"
-#include "../../headers/errors.h"
-#include "../../headers/commandline.h"
+#include "../../common/conn.h"
+#include "./api.h"
+#include "../../headers/client/client.h"
+#include "../../headers/client/errors.h"
+#include "../../headers/client/commandline.h"
 #include "../../common/client_server.h"
 
 #define UNIX_PATH_MAX 108
