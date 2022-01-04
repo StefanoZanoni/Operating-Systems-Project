@@ -9,7 +9,6 @@ typedef struct sconfig {
                       storage_capacity;
 } server_configuration_t;
 
-void get_config(char *path, server_configuration_t* configuration);
-void print_config(server_configuration_t configuration);
+void get_config(const char *path, server_configuration_t* configuration);
 
 #endif //PROGETTOSOL_CONFIGURATION_H
