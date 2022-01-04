@@ -7,61 +7,65 @@
 
 #include "configuration.h" 
 
-typedef struct atomic_fidx {
-
-	pthread_mutex_t fidx_mutex;
-	unsigned long int index;
-
-} atomic_fidx_t;
-
-typedef struct my_file {
+struct my_file {
 
 	unsigned long int fidx;
 	unsigned long int file_size;
 	bool is_locked;
 	char *pathname;
 	void *content;
+	FILE *f;
 
-} myfile_t;
+};
 
-typedef struct mynode {
+struct cache_node {
 
-	struct mynode *prev,
-				  *next;
-	myfile_t *file;
+	struct cache_node *prev,
+				  	  *next;
+	struct my_file *file;
 
-} node_t;
+};
 
-typedef struct myqueue {
+struct cache_queue {
 
 	pthread_mutex_t queue_mutex;
 	unsigned long int max_capacity;
 	unsigned long int curr_capacity;
 	unsigned long int max_files;
 	unsigned long int curr_files;
-	unsigned long int num_ejected;
-	node_t *head,
-		   *tail;
+    unsigned long int num_ejected;
+	struct cache_node *head,
+		   			  *tail;
 
-} queue_t;
+};
 
-typedef struct hashtable {
+struct cache_hash_table {
 
 	pthread_mutex_t table_mutex;
 	unsigned long int capacity;
-	node_t **files_references;
+	struct cache_node **files_references;
 
-} hashtable_t;
+};
 
-int cache_initialization(server_configuration_t config, hashtable_t *table, queue_t *queue);
-int is_queue_empty(queue_t *queue);
-int capacity_reached(queue_t *queue);
-int files_reached(queue_t *queue);
-node_t* new_node(myfile_t *f);
-void dequeue(queue_t *queue);
-int enqueue(queue_t *queue, hashtable_t *table, myfile_t *file);
-void reference_file(queue_t *queue, hashtable_t *table, myfile_t *file);
-void free_queue(queue_t *queue);
-void free_hashtable(hashtable_t *hashtable);
+extern struct cache_queue queue;
+extern struct cache_hash_table cache_table;
+
+int cache_initialization(server_configuration_t config, struct cache_hash_table *array, struct cache_queue *cqueue);
+struct my_file *new_file(char *pathname, struct cache_hash_table table);
+int is_queue_empty(struct cache_queue *cqueue);
+int capacity_reached(struct cache_queue *cqueue);
+int files_reached(struct cache_queue *cqueue);
+struct cache_node* new_node(struct my_file *f);
+int cache_remove_file(struct cache_hash_table *table, struct cache_queue *cqueue, char *filename);
+int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct my_file *file,
+            struct my_file **ejected, unsigned long int *ejected_dim);
+void reference_file(struct cache_queue *cqueue, struct cache_hash_table *table, struct my_file *file,
+                    struct my_file **ejected, unsigned long int *ejected_dim);
+int cache_search_file(struct cache_hash_table table, char *filename);
+struct my_file *cache_get_file(struct cache_hash_table table, char *filename);
+int cache_file_append(struct cache_queue *cqueue, struct cache_hash_table *table, char *filename,
+                      struct my_file **ejected, unsigned long int *ejected_dim, void *data, size_t data_size);
+void cache_cleanup(struct cache_hash_table *array, struct cache_queue *cqueue);
+void print_cache_data(struct cache_hash_table table);
 
 #endif //PROGETTOSOL_CACHE_H
