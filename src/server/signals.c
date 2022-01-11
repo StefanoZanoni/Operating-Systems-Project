@@ -54,11 +54,10 @@ void *signal_handler_thread(void *args) {
 			}
 
 			end_server = 2;
-            retval = write (fd, &end_server, sizeof(int));
+            retval = write(fd, &end_server, sizeof(int));
 			if (retval == -1) {
 				const char *fmt = "%s\n";
 				write_log(my_log, fmt, "Signal handler: Error in writing the pipe");
-				return NULL;
 			}
 
 			return NULL;
@@ -74,7 +73,6 @@ void *signal_handler_thread(void *args) {
 			if (retval == -1) {
 				fmt = "%s\n";
 				write_log(my_log, fmt, "Signal handler: Error in writing the pipe");
-				return NULL;
 			}
 						
 			return NULL;
