@@ -1,24 +1,21 @@
+#define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <time.h>
 #include <errno.h>
 #include <dirent.h>
 #include <sys/stat.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <sys/un.h>
 
-#include "../../headers/commands_execution.h"
-#include "../../headers/queue.h"
-#include "../../headers/client.h"
-#include "../../headers/api.h"
-#include "../../headers/errors.h"
+#include "../../headers/client/commands_execution.h"
+#include "../../headers/client/client.h"
+#include "../../src/API/api.h"
+#include "../../headers/client/errors.h"
 
 static int is_set_stdout = 0;
-static long int wbytes;
-static long int rbytes;
+static size_t wbytes;
+static size_t rbytes;
 
 typedef struct flist {
 
@@ -44,15 +41,10 @@ static void free_command(commandline_arg_t command) {
 static int args_counter(char **args) {
 
 	if (args) {
-
 		int i = 0;
-
 		while (args[i] != NULL) {
-
-			i++;
-
-		}
-
+            i++;
+        }
 		return i;
 	}
 
@@ -118,228 +110,235 @@ static int execute_f(char **args) {
 	abstime.tv_nsec = 0;
 
 	int retval = openConnection(sockname, msec, abstime);
-	if (retval == -1) {
-		free(sockname);
+	if (retval == -1) 
 		return -1;
-	}
 
 	return 0;
 }
 
-static int get_files(char *entry_path, int *num_to_write, flist_t *file_list) {
+/**
+ * This function is used to recursively get all files in the specified directory
+ *
+ * @param entry_path the next entry of the current directory
+ * @param num_to_get the number of files to get from the specified directory
+ * @param file_list the list where the recovered files will be stored
+ *
+ * @return -1 errror (errno set)
+ * @return 0 success
+ */
+static int get_files(char *entry_path, long int *num_to_get, flist_t *file_list) {
 
-	DIR *dirp = opendir(entry_path);
-	if (!dirp)
-		return -1;
+    DIR *dirp = opendir(entry_path);
+    if (!dirp)
+        return -1;
 
-	struct dirent *curr_entry = NULL;
+    struct dirent *curr_entry = NULL;
 
-	while (*num_to_write != 0 && (curr_entry = readdir(dirp)) != NULL) {
+    while (*num_to_get != 0 && (curr_entry = readdir(dirp)) != NULL) {
 
-		size_t entry_len = 0;
-		size_t curr_len = 0;
-		size_t total_len = 0;
-		int retval = 0;
+        size_t entry_len;
+        size_t curr_len;
+        size_t total_len;
+        int retval;
 
-		if (curr_entry->d_type == DT_DIR) {
+        if (curr_entry->d_type == DT_DIR) {
 
-			if (strcmp(curr_entry->d_name, ".") == 0 || strcmp(curr_entry->d_name, "..") == 0)
-         	continue;
+            if (strcmp(curr_entry->d_name, ".") == 0 || strcmp(curr_entry->d_name, "..") == 0)
+                continue;
 
-			char *dirpath = NULL;
+            char *dirpath = NULL;
 
-			entry_len = strlen(entry_path) + 1;
-			curr_len = strlen(curr_entry->d_name) + 1;
-			total_len = entry_len + 1 + curr_len;
-			dirpath = calloc(total_len, sizeof(char));
-			if (!dirpath) {
-				closedir(dirp);
-				return -1;
-			}
+            entry_len = strlen(entry_path) + 1;
+            curr_len = strlen(curr_entry->d_name) + 1;
+            total_len = entry_len + 1 + curr_len;
+            dirpath = calloc(total_len, sizeof(char));
+            if (!dirpath) {
+                closedir(dirp);
+                return -1;
+            }
 
-			snprintf(dirpath, total_len, "%s/%s", entry_path, curr_entry->d_name);
+            snprintf(dirpath, total_len, "%s/%s", entry_path, curr_entry->d_name);
 
-			retval = get_files(dirpath, num_to_write, file_list);
-			if (retval == -1) {
-				free(dirpath);
-				closedir(dirp);
-				return -1;
-			}
+            retval = get_files(dirpath, num_to_get, file_list);
+            if (retval == -1) {
+                free(dirpath);
+                closedir(dirp);
+                return -1;
+            }
 
-			free(dirpath);
+            free(dirpath);
 
-		}
-		else if (curr_entry->d_type == DT_REG) {
-			
-			char *filepath = NULL;
+        }
+        else if (curr_entry->d_type == DT_REG) {
 
-			entry_len = strlen(entry_path) + 1;
-			curr_len = strlen(curr_entry->d_name) + 1;
-			total_len = entry_len + 1 + curr_len;
-			filepath = calloc(total_len, sizeof(char));
-			if (!filepath) {
-				closedir(dirp);
-				return -1;
-			}
-			
-			snprintf(filepath, total_len, "%s/%s", entry_path, curr_entry->d_name);
-			
-			// If I have to write the last free position in the file_list->files vector,
-			// I need to allocate more memory since I'm getting an undefined number of files
-			if (*num_to_write < 0 && file_list->pos == file_list->dim - 2) {
+            char *filepath = NULL;
 
-				file_list->dim += file_list->dim / 2;
-				char **temp = calloc(file_list->dim, sizeof(char*));
-				if (!temp) {
-					closedir(dirp);
-					free(filepath);
-					return -1;
-				}
+            entry_len = strlen(entry_path) + 1;
+            curr_len = strlen(curr_entry->d_name) + 1;
+            total_len = entry_len + 1 + curr_len;
+            filepath = calloc(total_len, sizeof(char));
+            if (!filepath) {
+                closedir(dirp);
+                return -1;
+            }
 
-				int i = 0;
-				while (i < file_list->pos) {
+            snprintf(filepath, total_len, "%s/%s", entry_path, curr_entry->d_name);
 
-					size_t curr_len = strlen(file_list->files[i]) + 1;
-					temp[i] = calloc(curr_len, sizeof(char));
-					if (!temp[i]) {
+            // If I have to write the last free position in the file_list->files vector,
+            // I need to allocate more memory since I'm getting an undefined number of files
+            if (*num_to_get < 0 && file_list->pos == file_list->dim - 2) {
 
-						closedir(dirp);
-						free(filepath);
-						int j = 0;
-						while (j < i) 
-							free(temp[j++]);
-						free(temp);
+                file_list->dim += file_list->dim / 2;
+                char **temp = calloc(file_list->dim, sizeof(char*));
+                if (!temp) {
+                    closedir(dirp);
+                    free(filepath);
+                    return -1;
+                }
 
-						return -1;
+                int i = 0;
+                while (i < file_list->pos) {
 
-					}
-					memmove(temp[i], file_list->files[i], curr_len);
-					free(file_list->files[i]);
-					file_list->files[i] = NULL;
-					i++;
+                    size_t curr_len = strlen(file_list->files[i]) + 1;
+                    temp[i] = calloc(curr_len, sizeof(char));
+                    if (!temp[i]) {
 
-				}
+                        closedir(dirp);
+                        free(filepath);
+                        int j = 0;
+                        while (j < i)
+                            free(temp[j++]);
+                        free(temp);
 
-				free(file_list->files);
-				file_list->files = temp;
-				temp = NULL;
+                        return -1;
 
-			}
-			
-			file_list->files[file_list->pos++] = strndup(filepath, total_len);
-			free(filepath);
+                    }
+                    memmove(temp[i], file_list->files[i], curr_len);
+                    free(file_list->files[i]);
+                    file_list->files[i] = NULL;
+                    i++;
 
-			*num_to_write = *num_to_write - 1;
+                }
 
-		}
+                free(file_list->files);
+                file_list->files = temp;
+                temp = NULL;
 
-	}
+            }
 
-	closedir(dirp);
+            file_list->files[file_list->pos++] = strndup(filepath, total_len);
+            free(filepath);
 
-	return 0;
+            *num_to_get = *num_to_get - 1;
+
+        }
+
+    }
+
+    closedir(dirp);
+
+    return 0;
 }
 
 static int execute_w(char **args) {
 
-	int num_to_write = 0;
+    long int num_to_write = 0;
 
-	// If the number of files to be sent is 0 or not specified
-	// I set num_to_write to -1 so since it is decremented by 1 
-	// at each iteration I can read all those in the directory.
-	if (args[1]) {
+    // If the number of files to be sent is 0 or not specified
+    // I set num_to_write to -1 so since it is decremented by 1
+    // at each iteration I can read all those in the directory.
+    if (args[1]) {
 
-		num_to_write = strtoul(args[1], NULL, 10);
-		if (num_to_write == 0)
-			num_to_write = -1;
+        num_to_write = strtol(args[1], NULL, 10);
+        if (num_to_write == 0)
+            num_to_write = -1;
 
-	}
-	else 
-		num_to_write = -1;
+    }
+    else
+        num_to_write = -1;
 
-	char *dirpath = NULL;
-	dirpath = realpath(args[0], dirpath);
-	if (!dirpath)
-		return -1;
+    char *dirpath = NULL;
+    dirpath = realpath(args[0], dirpath);
+    if (!dirpath)
+        return -1;
 
-	flist_t file_list;
-	if (num_to_write > 0) {
+    flist_t file_list;
+    if (num_to_write > 0) {
 
-		file_list.dim = num_to_write + 1;
-		file_list.pos = 0;
-		file_list.files = calloc(file_list.dim, sizeof(char*));
-		if (!file_list.files) {
-			free(dirpath);
-			return -1;
-		}
+        file_list.dim = num_to_write + 1;
+        file_list.pos = 0;
+        file_list.files = calloc(file_list.dim, sizeof(char*));
+        if (!file_list.files) {
+            free(dirpath);
+            return -1;
+        }
 
-	}
-	else {
+    }
+    else {
 
-		// I start by considering a maximum of 10 files to be sent.
-		// If the number of files in the directory is more than 10
-		// then I realloc files.
-		file_list.dim = 11;
-		file_list.pos = 0;
-		file_list.files = calloc(11, sizeof(char*));
-		if (!file_list.files) {
-			free(dirpath);
-			return -1;
-		}
+        // I start by considering a maximum of 10 files to be sent.
+        // If the number of files in the directory is more than 10
+        // then I realloc files.
+        file_list.dim = 11;
+        file_list.pos = 0;
+        file_list.files = calloc(11, sizeof(char*));
+        if (!file_list.files) {
+            free(dirpath);
+            return -1;
+        }
 
-	}
+    }
 
-	int i = 0;
+    int i = 0;
 
-	int retval = get_files(dirpath, &num_to_write, &file_list);
-	if (retval == -1) {
+    int retval = get_files(dirpath, &num_to_write, &file_list);
+    if (retval == -1) {
 
-		while (file_list.files[i] != NULL) 
-			free(file_list.files[i++]);
+        while (file_list.files[i] != NULL)
+            free(file_list.files[i++]);
 
-		free(file_list.files);
-		free(dirpath);
+        free(file_list.files);
+        free(dirpath);
 
-		return -1;
+        return -1;
 
-	}
+    }
 
-	i = 0;
+    i = 0;
 
-	while(file_list.files[i] != NULL) {
+    while(file_list.files[i] != NULL) {
 
-		if (writeFile(file_list.files[i], w_dir) == -1) {
+        if (writeFile(file_list.files[i], w_dir) == -1) {
 
-			// if there is an error with the file writing 
-			// then I free the memory of all of successive files
-			while (file_list.files[i] != NULL)
-				free(file_list.files[i++]);
+            // if there is an error with the file writing
+            // then I free the memory of all of successive files
+            while (file_list.files[i] != NULL)
+                free(file_list.files[i++]);
 
-			free(file_list.files);
-			free(dirpath);
+            free(file_list.files);
+            free(dirpath);
 
-			return -1;
+            return -1;
 
-		}
+        }
 
-		// If the file has been successfully written to the server,
-		// I add its size to the amount of bytes written so far
-		FILE* f = fopen(file_list.files[i], "rb");
-		fseek(f, 0L, SEEK_END);
-		wbytes += ftell(f);
-		fclose(f);
+        // If the file has been successfully written to the server,
+        // I add its size to the amount of bytes written so far
+        struct stat st;
+        if (stat(file_list.files[i], &st) == 0)
+            wbytes += st.st_size;
 
-		// if the current file has been successfully written to the server
-		// then I can free its memory
-		free(file_list.files[i]);
-		file_list.files[i++] = NULL;
+        // if the current file has been successfully written to the server
+        // then I can free its memory
+        free(file_list.files[i]);
+        file_list.files[i++] = NULL;
 
-	}
+    }
 
-	free(dirpath);
-	free(file_list.files);
+    free(dirpath);
+    free(file_list.files);
 
-	return 0;
+    return 0;
 
 }
 
@@ -364,10 +363,9 @@ static int execute_W(char **args) {
 
 		// Only if the file has been successfully written to the server 
 		// I store total amount of bytes written in wbytes
-		FILE* f = fopen(pathname, "rb");
-		fseek(f, 0L, SEEK_END);
-		wbytes += ftell(f);
-		fclose(f);
+		struct stat st;
+		if (stat(pathname, &st) == 0)
+			wbytes += st.st_size;
 
 		free(pathname);
 
@@ -401,23 +399,8 @@ static int execute_r(char **args) {
 
 		rbytes += size;
 
-		if (r_dir) {
-
-			FILE *f = fopen(pathname, "wb");
-			if (!f) {
-				free(pathname);
-				free(buf);
-				return -1;
-			}
-			fwrite((char*) buf, sizeof(char), size, f);
-			fclose(f);
-			
-		}
-
-		if (buf) {
+		if (buf)
 			free(buf);
-			buf = NULL;
-		}
 		free(pathname);
 
 		i++;
@@ -430,7 +413,7 @@ static int execute_r(char **args) {
 
 static int execute_R(char **args) {
 
-	int N = 0;
+	int N;
 
 	if (args && args[0]) {
 
@@ -480,7 +463,7 @@ static void execute_t(char **args) {
 
 	if (args && args[0]) {
 
-		unsigned long int msec = strtoul(args[0], NULL, 10);
+		long int msec = strtol(args[0], NULL, 10);
 
 		if (msec != 0) {
 
@@ -563,7 +546,7 @@ static void print_execution_result(commandline_arg_t command, int retval) {
 			if (!retval)
 				printf("number of bytes written: %.3lf MB\n\n", MB);
 			else
-				printf("number of bytes written: %.3lf kB\n", MB);
+				printf("number of bytes written: %.3lf MB\n", MB);
 		}
 
 	}
@@ -581,7 +564,7 @@ static void print_execution_result(commandline_arg_t command, int retval) {
 			if (!retval)
 				printf("number of bytes read: %.3lf MB\n\n", MB);
 			else
-				printf("number of bytes read: %.3lf kB\n", MB);
+				printf("number of bytes read: %.3lf MB\n", MB);
 		}
 
 	}
@@ -589,7 +572,7 @@ static void print_execution_result(commandline_arg_t command, int retval) {
 
 int execute_command(commandline_arg_t command) {
 
-	int errnocpy = 0;
+	int errnocpy;
 	int retval = 0;
 	errno = 0;
 	local_errno = 0;
@@ -602,7 +585,7 @@ int execute_command(commandline_arg_t command) {
 			free_command(command);
 			return 1;
 
-		} break;
+		}
 
 		case 'f': {
 
