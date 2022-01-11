@@ -1,4 +1,5 @@
 workerThreads = 8
-numberOfFiles = 20
-storageCapacity = 100
-socketName = mysocket
+numberOfFiles = 100
+storageCapacity = 32000000
+socketName = LSOfilestorage.sk
+logFile = logs/log.txt
