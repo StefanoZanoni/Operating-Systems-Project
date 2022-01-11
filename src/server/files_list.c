@@ -56,31 +56,6 @@ int files_list_add(struct references_list **list, struct my_file *file, pthread_
 
 }
 
-struct my_file *files_list_get_file(struct references_list *list, char *filename, pthread_mutex_t *mutex) {
-
-	if (!filename) {
-		errno = EINVAL;
-		const char *fmt = "%s filename = %p\n";
-		write_log(my_log, fmt, "Error in files_list_get_file parameters", list, filename);
-		return NULL;
-	}
-
-	LOCK( mutex )
-
-	struct references_list *aux = list;
-
-	while ( aux != NULL && strcmp(aux->file->pathname, filename) != 0 )
-		aux = aux->next;
-
-	if (!aux) {
-        UNLOCK( mutex )
-        return NULL;
-    }
-
-	UNLOCK( mutex )
-
-	return aux->file;
-}
 
 int files_list_remove(struct references_list **list, struct my_file file, pthread_mutex_t *mutex) {
 
@@ -146,6 +121,32 @@ int files_list_search_file(struct references_list *list, char *filename, pthread
 	UNLOCK( mutex )
 
 	return 1;
+}
+
+struct my_file *files_list_get_file(struct references_list *list, char *filename, pthread_mutex_t *mutex) {
+
+    if (!filename) {
+        errno = EINVAL;
+        const char *fmt = "%s filename = %p\n";
+        write_log(my_log, fmt, "Error in files_list_get_file parameters", list, filename);
+        return NULL;
+    }
+
+    LOCK( mutex )
+
+    struct references_list *aux = list;
+
+    while ( aux != NULL && strcmp(aux->file->pathname, filename) != 0 )
+        aux = aux->next;
+
+    if (!aux) {
+        UNLOCK( mutex )
+        return NULL;
+    }
+
+    UNLOCK( mutex )
+
+    return aux->file;
 }
 
 void files_list_cleanup(struct references_list **list, pthread_mutex_t *mutex) {
