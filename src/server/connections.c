@@ -49,6 +49,15 @@ int initialize_conn_hash_table(struct conn_hash_table *table) {
 
 }
 
+/**
+ * This function is used to reallocate the connections hash table in case the connected clients
+ * exceed the actual maximum client capacity of the table
+ *
+ * @param table hash table
+ *
+ * @return -1 error (errno set)
+ * @return 0 success
+ */
 static int conn_hash_table_realloc(struct conn_hash_table *table) {
 
 	struct conn_hash_table *temp = calloc(1, sizeof(struct conn_hash_table));
@@ -58,11 +67,17 @@ static int conn_hash_table_realloc(struct conn_hash_table *table) {
 		return -1;
 	}
 
-	temp = memcpy(temp, table, sizeof(struct conn_hash_table));
+	temp->dim = table->dim;
+	temp->current_dim = table->current_dim;
+	for (int i = 0; i < temp->dim; i++) {
+		memcpy(temp->clients[i].list, table->clients[i].list, sizeof(struct conn_flist));
+		temp->clients[i].client = table->clients[i].client;
+		temp->clients[i].taken = table->clients[i].taken;
+	}
 
 	conn_hash_table_cleanup(table);
 
-	table->dim = table->dim * 2;
+	table->dim *= 2;
 	table->current_dim = 0;
 	table->clients = calloc(table->dim, sizeof(struct conn_elem));
 
@@ -95,7 +110,7 @@ int insert_client(int client, struct conn_hash_table *table) {
     if ( (double) table->current_dim / (double) table->dim > 0.75 ) {
         int retval = conn_hash_table_realloc(table);
         if (retval == -1) {
-            UNLOCK( &(table->table_mutex) );
+            UNLOCK( &(table->table_mutex) )
             return -1;
         }
     }
@@ -147,43 +162,18 @@ int remove_client(struct conn_hash_table *table, int client) {
 	return 0;
 }
 
-struct references_list *get_client_list(int client, struct conn_hash_table table) {
-
-	if (client < 0 ) {
-		errno = EINVAL;
-		const char *fmt = "%s client = %d";
-		write_log(my_log, fmt, "Error in hash_table_insert_client parameters:", client);
-		return NULL;
-	}
-
-	LOCK( &(table.table_mutex) )
-
-	unsigned int index = conn_hash(client) % table.dim;
-    while (table.clients[index].client != client) {
-        if (index == table.dim - 1) {
-            index = 0;
-            continue;
-        }
-        index++;
-    }
-
-	UNLOCK( &(table.table_mutex) )
-
-	return table.clients[index].list->clist;
-}
-
 int conn_hash_table_add_file(int client, struct conn_hash_table *table, struct my_file *file) {
 
-	if (client < 0 || !table || !file) {
-		errno = EINVAL;
-		const char *fmt = "%s client = %d, table = %p, file = %p\n";
-		write_log(my_log, fmt, "Error in add_file parameters", client, table, file);
-		return -1;
-	}
+    if (client < 0 || !table || !file) {
+        errno = EINVAL;
+        const char *fmt = "%s client = %d, table = %p, file = %p\n";
+        write_log(my_log, fmt, "Error in add_file parameters", client, table, file);
+        return -1;
+    }
 
-	LOCK( &(table->table_mutex) )
+    LOCK( &(table->table_mutex) )
 
-	unsigned int index = conn_hash(client) % table->dim;
+    unsigned int index = conn_hash(client) % table->dim;
     while (table->clients[index].client != client) {
         if (index == table->dim - 1) {
             index = 0;
@@ -192,11 +182,11 @@ int conn_hash_table_add_file(int client, struct conn_hash_table *table, struct m
         index++;
     }
 
-	files_list_add(&(table->clients[index].list->clist), file, &(table->clients[index].list->conn_list_mutex));
+    files_list_add(&(table->clients[index].list->clist), file, &(table->clients[index].list->conn_list_mutex));
 
-	UNLOCK( &(table->table_mutex) )
+    UNLOCK( &(table->table_mutex) )
 
-	return 0;
+    return 0;
 }
 
 int conn_hash_table_remove_file(int client, struct conn_hash_table *table, struct my_file file) {
@@ -238,4 +228,29 @@ void conn_hash_table_cleanup(struct conn_hash_table *table) {
 	free(table->clients);
 	pthread_mutex_destroy( &(table->table_mutex) );
 
+}
+
+struct references_list *get_client_list(int client, struct conn_hash_table table) {
+
+    if (client < 0 ) {
+        errno = EINVAL;
+        const char *fmt = "%s client = %d";
+        write_log(my_log, fmt, "Error in hash_table_insert_client parameters:", client);
+        return NULL;
+    }
+
+    LOCK( &(table.table_mutex) )
+
+    unsigned int index = conn_hash(client) % table.dim;
+    while (table.clients[index].client != client) {
+        if (index == table.dim - 1) {
+            index = 0;
+            continue;
+        }
+        index++;
+    }
+
+    UNLOCK( &(table.table_mutex) )
+
+    return table.clients[index].list->clist;
 }
