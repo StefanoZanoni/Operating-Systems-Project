@@ -10,9 +10,6 @@
 
 static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-/*
-	* this function is used to open the first time the log file  
-*/
 FILE* start_log(const char *pathname) {
 
 	FILE *log = fopen(pathname, "a");
@@ -36,11 +33,6 @@ FILE* start_log(const char *pathname) {
 	return log;
 }
 
-/*
-	* this function is used to write a variable number of messages on log file.
-	* the first message has the following form: [yyyy-mm-dd hh:mm:ss] - -----------first message---------
-	* any other messages are not preceded by the date
-*/
 void write_log(FILE *log, const char *fmt, ...) {
 
 	time_t timer;
