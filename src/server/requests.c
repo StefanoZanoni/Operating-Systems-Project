@@ -6,9 +6,12 @@
 
 #include "../../common/client_server.h"
 #include "../../common/conn.h"
+#include "../../common/util.h"
 #include "../../headers/server/log.h"
 #include "../../headers/server/cache.h"
 #include "../../headers/server/connections.h"
+
+static pthread_mutex_t open_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int read_request(int client, server_command_t *request) {
 
@@ -124,13 +127,25 @@ int send_outcome(int client, server_outcome_t outcome) {
 	return 0;
 }
 
+/**
+ * This function is used to create a new file and add the latter to the open files list
+ *
+ * @param filepath the absolute path of the file
+ * @param client the current client
+ *
+ * @return -1 error (errno set)
+ * @return 0 success
+ */
 static int create_file(char *filepath, int client) {
+
+	LOCK( &open_mutex )
 
 	int retval;
 
 	if ( cache_search_file(cache_table, filepath) || files_list_search_file(flist, filepath, &flist_mutex)) {
 
 		fprintf(stderr, "Error client %d: the file %s is already present on the server\n", client, filepath);
+		UNLOCK( &open_mutex )
 		return -1;
 
 	}
@@ -139,6 +154,7 @@ static int create_file(char *filepath, int client) {
 	if (!file) {
 		const char *fmt = "Client %d CMD_OPEN_FILE: Error in new_file allocation %s";
 		write_log(my_log, fmt, client, filepath);
+		UNLOCK( &open_mutex )
 		return -1;
 	}
 
@@ -147,12 +163,23 @@ static int create_file(char *filepath, int client) {
 		const char *fmt = "Client %d CMD_OPEN_FILE: Error in files_list_add %s\n";
 		write_log(my_log, fmt, client, filepath);
         free(file);
+        UNLOCK( &open_mutex )
 		return -1;
 	}
+
+	UNLOCK( &open_mutex )
 
 	return 0;
 }
 
+/**
+ * This function is used to create a copy of the file so that I have a separate copy of the file in the cache
+ *
+ * @param file the file to be copied
+ *
+ * @return NULL error (errno set)
+ * @return copy success
+ */
 static struct my_file *file_copy(struct my_file *file) {
 
     struct my_file *copy = calloc(1, sizeof(struct my_file));
@@ -187,6 +214,15 @@ static struct my_file *file_copy(struct my_file *file) {
 
 }
 
+/**
+ * This function is used to lock a file present in the cache or in the open files list
+ *
+ * @param filepath the absolute path of the file
+ * @param client the current client
+ *
+ * @return -1 error (errno set)
+ * @return 0 success
+ */
 static int lock_file(char *filepath, int client) {
 
     if ( cache_search_file(cache_table, filepath) ) {
@@ -299,10 +335,12 @@ int execute_request(server_command_t request, int client, int workers_pipe_wfd) 
 		errno = EINVAL;
 		const char *fmt = "%s\n";
 		write_log(my_log, fmt, "Error in execute_request parameters");
+        return -1;
 	}
 
     char *filepath = NULL;
 
+    // the request to read a file may not contain the file name
     if (request.cmd != CMD_READ_FILE) {
         filepath = calloc(strlen(request.filepath) + 1, sizeof(char));
         if (!filepath) {
@@ -312,6 +350,7 @@ int execute_request(server_command_t request, int client, int workers_pipe_wfd) 
         }
         filepath = strcpy(filepath, request.filepath);
     }
+    // the request to read a file contain the file name
     else if (request.num_files == 0) {
         filepath = calloc(strlen(request.filepath) + 1, sizeof(char));
         if (!filepath) {
@@ -329,7 +368,10 @@ int execute_request(server_command_t request, int client, int workers_pipe_wfd) 
 	int retval;
 	server_outcome_t outcome;
 	memset(&outcome, 0, sizeof(outcome));
+
+    // this vector stores the ejected files during the cache replacement algorithm execution
 	struct my_file *ejected = NULL;
+    // this size of this vector
 	unsigned long int ejected_dim = 0;
 
 	switch (request.cmd) {
@@ -507,6 +549,11 @@ int execute_request(server_command_t request, int client, int workers_pipe_wfd) 
 						const char *fmt = "Client %d CMD_OPEN_FILE: Error while sending the outcome\n";
 						write_log(my_log, fmt, client);
 					}
+					retval = writen(workers_pipe_wfd, &client, sizeof(int));
+                    if (retval == -1) {
+                        const char *fmt = "%s\n";
+                        write_log(my_log, fmt, "execute_request: Error sending client descriptor");
+                    }
                     free(filepath);
 					return -1;
 
@@ -678,7 +725,7 @@ int execute_request(server_command_t request, int client, int workers_pipe_wfd) 
 							else 
 								break;
 
-							int retval = 1;
+							retval = 1;
 							if (file->is_locked == true) {
 								retval = files_list_search_file(get_client_list(client, conn_table), file->pathname,
                                                              &(conn_table.clients[client].list->conn_list_mutex));
@@ -733,6 +780,18 @@ int execute_request(server_command_t request, int client, int workers_pipe_wfd) 
 							const char *fmt = "Client %d: the read file is %s, size %ld\n";
 							write_log(my_log, fmt, client, file->pathname, file->file_size);
 						}
+
+						// this is necessary if I exit the loop before all required files have been read
+						if (num_files > 0) {
+                            outcome.all_read = 1;
+                            outcome.res = 0;
+                            retval = send_outcome(client, outcome);
+                            if (retval == -1) {
+                                const char *fmt = "Client %d CMD_READ_FILE: Error while sending the outcome\n";
+                                write_log(my_log, fmt, client);
+                                return -1;
+                            }
+                        }
 
 					}
 				}
@@ -831,9 +890,20 @@ int execute_request(server_command_t request, int client, int workers_pipe_wfd) 
                 free(filepath);
 				return -1;
 			}
+			if (retval == -2) {
+                conn_hash_table_remove_file(client, &conn_table, *file);
+                free(file->pathname);
+                free(file->content);
+                fclose(file->f);
+                free(file);
+			}
 
-            const char *fmt = "Client %d: the written file is %s, size %ld\n";
-            write_log(my_log, fmt, client, filepath, file->file_size);
+			const char *fmt = NULL;
+
+			if (retval != -2) {
+	            fmt = "Client %d: the written file is %s, size %ld bytes\n";
+	            write_log(my_log, fmt, client, filepath, file->file_size);
+	        }
 
             retval = files_list_remove(&flist, *tmp, &flist_mutex);
             if (retval == -1) {
@@ -945,11 +1015,14 @@ int execute_request(server_command_t request, int client, int workers_pipe_wfd) 
                     i++;
                 }
                 free(ejected);
-                ejected = NULL;
 
             }
+            ejected = NULL;
 			
 		} break;
+
+
+
 
 		case CMD_APPEND_TO_FILE: {
 
@@ -1513,6 +1586,7 @@ int execute_request(server_command_t request, int client, int workers_pipe_wfd) 
 
 	}
 
+    // I tell the main thread to listen for this client's descriptor again
 	retval = writen(workers_pipe_wfd, &client, sizeof(int));
 	if (retval == -1) {
 		const char *fmt = "%s\n";
