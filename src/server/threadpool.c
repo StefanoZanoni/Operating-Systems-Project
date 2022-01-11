@@ -52,10 +52,17 @@ static struct tpool_work *tpool_work_get(struct tpool *tp) {
 
 }
 
+/**
+ * This function is performed by each thread of the threadpool
+ *
+ * @param arg threadpool
+ *
+ * @return NULL
+ */
 static void *tpool_worker(void *arg) {
 
 	struct tpool *tp = (struct tpool*) arg;
-	struct tpool_work *work;
+	struct tpool_work *work = NULL;
 
 	while (1) {
 
@@ -86,16 +93,19 @@ static void *tpool_worker(void *arg) {
 
 		// execution of parallel works
 		if (work != NULL) {
+            long tid = (long) pthread_self();
 			if (work->f(work->request, work->client, work->workers_pipe_wfd) == -1) {
-				long tid = (long) pthread_self();
-				const char *fmt = "Thread [%ld]: error while executing command no.[%d]\n";
-				write_log(my_log, fmt, tid, (work->request).cmd);
+				const char *fmt = "Thread [%ld]: error while executing command no. %d on client %d\n";
+				write_log(my_log, fmt, tid, (work->request).cmd, work->client);
 			}
+            const char *fmt = "Thread [%ld]: command no. %d executed on client %d\n";
+            write_log(my_log, fmt, tid, (work->request).cmd, work->client);
             free(work->request.filepath);
             if (work->request.data)
                 free(work->request.data);
             memset(&work->request, 0, sizeof(server_command_t));
 			free(work);
+			work = NULL;
 		}
 
 		LOCK(&(tp->work_mutex))
@@ -226,7 +236,7 @@ int tpool_add_work(struct tpool *tp, server_command_t request, int client, int w
 		tp->last_work = tp->first_work;
 	}
 	else {
-		tp->last_work->next = NULL;
+		tp->last_work->next = work;
 		tp->last_work = work;
 	}
 	tp->list_length++;
@@ -234,7 +244,7 @@ int tpool_add_work(struct tpool *tp, server_command_t request, int client, int w
 
 	UNLOCK(&(tp->work_mutex))
 
-	return 1;
+	return 0;
 
 }
 
