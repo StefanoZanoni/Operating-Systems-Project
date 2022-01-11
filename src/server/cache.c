@@ -12,6 +12,8 @@ static unsigned long int max_size = 0;
 static unsigned long int num_max_files = 0;
 static unsigned long int num_replacements = 0;
 
+static pthread_mutex_t cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 void print_cache_data(struct cache_hash_table table) {
 
     double m_size = (double) max_size / 1000000;
@@ -23,6 +25,11 @@ void print_cache_data(struct cache_hash_table table) {
 		if (table.files_references[i] != NULL)
 			printf("%s\n", table.files_references[i]->file->pathname);
 	}
+
+    const char *fmt = "Maximum size reached by the server: %.3lf MB\n";
+    write_log(my_log, fmt, m_size);
+    fmt = "Maximum number of files stored on the server: %ld\n";
+    write_log(my_log, fmt, num_max_files);
 
 }
 
@@ -55,10 +62,8 @@ int cache_initialization(server_configuration_t config, struct cache_hash_table 
     cqueue->max_files = config.num_files;
     cqueue->curr_files = 0;
     cqueue->num_ejected = 0;
-	pthread_mutex_init(&(cqueue->queue_mutex), NULL );
 
 	table->capacity = config.num_files;
-	pthread_mutex_init( &(table->table_mutex), NULL );
 	table->files_references = calloc(config.num_files, sizeof(struct cache_node*));
 	if (!table->files_references) {
 		const char *fmt = "%s\n";
@@ -87,7 +92,7 @@ struct my_file *new_file(char *pathname, struct cache_hash_table table) {
     new->pathname = strcpy(new->pathname, pathname);
 	new->is_locked = false;
 
-	LOCK ( &(table.table_mutex) )
+	LOCK( &cache_mutex )
 
 	new->fidx = cache_hash( (unsigned char*) pathname ) % table.capacity;
 	while (table.files_references[new->fidx] != NULL) {
@@ -98,7 +103,7 @@ struct my_file *new_file(char *pathname, struct cache_hash_table table) {
 		new->fidx++;
 	}
 
-	UNLOCK ( &(table.table_mutex) )
+	UNLOCK( &cache_mutex )
 
 	new->f = fopen(pathname, "a+b");
 	if (!new->f) {
@@ -108,9 +113,9 @@ struct my_file *new_file(char *pathname, struct cache_hash_table table) {
 		return NULL;
 	}
 
-	fseek(new->f, 0, SEEK_END);
-	new->file_size = ftell(new->f);
-	fseek(new->f, 0, SEEK_SET);
+	struct stat st;
+	if (stat(pathname, &st) == 0)
+		new->file_size = st.st_size;
 	new->content = (char*) calloc(new->file_size, sizeof(char));
 	if (!new->content) {
 		const char *fmt = "%s\n";
@@ -133,18 +138,18 @@ struct my_file *new_file(char *pathname, struct cache_hash_table table) {
 
 struct cache_node *new_node(struct my_file *f) {
 
-	struct cache_node *temp = calloc(1, sizeof(struct cache_node));
-	if (!temp) {
+	struct cache_node *new = calloc(1, sizeof(struct cache_node));
+	if (!new) {
 		const char *fmt = "%s\n";
 		write_log(my_log, fmt, "new_node: Error in temp allocation");
 		return NULL;
 	}
 
-	temp->prev = NULL;
-	temp->next = NULL;
-	temp->file = f;
+	new->prev = NULL;
+	new->next = NULL;
+	new->file = f;
 
-	return temp;
+	return new;
 }
 
 int is_queue_empty(struct cache_queue *cqueue) {
@@ -165,14 +170,18 @@ int files_reached(struct cache_queue *cqueue) {
 	
 }
 
+/**
+ * This function is used to remove the least recently used file from the cache
+ *
+ * @param cqueue cache queue
+ *
+ * @return -1 if the cache is empty
+ * @return the index in the cache hash table of that file otherwise
+ */
 static unsigned long int dequeue(struct cache_queue *cqueue) {
 
-    LOCK( &(cqueue->queue_mutex) )
-
-	if ( is_queue_empty(cqueue) ) {
-        UNLOCK( &(cqueue->queue_mutex) )
+	if ( is_queue_empty(cqueue) )
         return -1;
-    }
 
 	// if there is only one node, then change head
 	if (cqueue->head == cqueue->tail)
@@ -193,8 +202,6 @@ static unsigned long int dequeue(struct cache_queue *cqueue) {
 	cqueue->curr_files--;
     cqueue->curr_capacity -= size_to_remove;
 
-	UNLOCK( &(cqueue->queue_mutex) )
-
 	return fidx;
 }
 
@@ -209,21 +216,16 @@ int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct m
 
 	unsigned long int num_ejected = 0;
 
-	LOCK( &(cqueue->queue_mutex) )
-
 	if (file->file_size > cqueue->max_capacity) {
 		fprintf(stderr,
                 "Error: the file to be inserted in the server exceeds the maximum capacity of the latter\n");
-        UNLOCK( &(cqueue->queue_mutex) )
-		return -1;
+		return -2;
 	}
 
-	LOCK( &(table->table_mutex) )
+	LOCK( &cache_mutex )
 
 	while (capacity_reached(cqueue) || files_reached(cqueue)
            || (cqueue->curr_capacity + file->file_size > cqueue->max_capacity) ) {
-
-        UNLOCK( &(cqueue->queue_mutex) )
 
 		unsigned long int available;
 
@@ -233,12 +235,14 @@ int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct m
 		if ( (available = dequeue(cqueue)) == -1 ) {
 			fmt = "%s\n";
 			write_log(my_log, fmt, "enqueue: Error during replacement");
-			UNLOCK( &(table->table_mutex) )
+			UNLOCK( &cache_mutex )
 			return -1;
 		}
 		else {
 
             table->files_references[available]->file->is_locked = false;
+
+            UNLOCK( &cache_mutex )
 
 			num_ejected++;
 
@@ -249,15 +253,16 @@ int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct m
 				else
 					*ejected_dim *= 2;
 
+                // if no files have already been ejected, I allocate memory to store them
                 if (!*ejected) {
                     *ejected = calloc(*ejected_dim, sizeof(struct my_file));
                     if (!*ejected) {
                         fmt = "%s\n";
                         write_log(my_log, fmt, "enqueue: Error in *ejected allocation");
-                        UNLOCK( &(table->table_mutex) )
                         return -1;
                     }
                 }
+                // I need to copy the files ejected so far and allocate new memory
                 else {
 
                     struct my_file *temp = *ejected;
@@ -265,7 +270,6 @@ int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct m
                     if (!*ejected) {
                         fmt = "%s\n";
                         write_log(my_log, fmt, "enqueue: Error in *ejected re-allocation");
-                        UNLOCK( &(table->table_mutex) )
                         for (unsigned long int i = 0; i < *ejected_dim / 2; i++) {
                             free(temp[i].pathname);
                             free(temp[i].content);
@@ -274,6 +278,7 @@ int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct m
                         return -1;
                     }
 
+                    // the copy of the files ejected up to this moment
                     for (unsigned long int i = 0; i < *ejected_dim / 2; i++) {
                         (*ejected)[i].fidx = temp[i].fidx;
                         (*ejected)[i].file_size = temp[i].file_size;
@@ -282,12 +287,15 @@ int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct m
                         if (!(*ejected)[i].pathname) {
                             fmt = "%s\n";
                             write_log(my_log, fmt, "enqueue: Error in (*ejected)[i].pathname allocation");
-                            UNLOCK(&(table->table_mutex))
+
+                            // in case of error I need to free the memory of the files copied up to this moment
                             for (unsigned long int j = 0; j < i; j++) {
                                 free( (*ejected)[i].pathname );
                                 free( (*ejected)[i].content );
                             }
                             free(*ejected);
+
+                            //in case of error I need to free the memory of the files not yes copied
                             for (unsigned long int j = i; j < *ejected_dim / 2; j++) {
                                 free(temp[j].pathname);
                                 free(temp[j].content);
@@ -299,13 +307,16 @@ int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct m
                         if (!(*ejected)[i].content) {
                             fmt = "%s\n";
                             write_log(my_log, fmt, "enqueue: Error in (*ejected)[i].content allocation");
-                            UNLOCK(&(table->table_mutex))
+
+                            // in case of error I need to free the memory of the files copied up to this moment
                             for (unsigned long int j = 0; j < i; j++) {
                                 free( (*ejected)[i].pathname );
                                 free( (*ejected)[i].content );
                             }
                             free( (*ejected)[i].pathname);
                             free(*ejected);
+
+                            //in case of error I need to free the memory of the files not yes copied
                             for (unsigned long int j = i; j < *ejected_dim / 2; j++) {
                                 free(temp[j].pathname);
                                 free(temp[j].content);
@@ -328,12 +339,17 @@ int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct m
 
 			}
 
+			LOCK( &cache_mutex )
+
+            // now I can add the new ejected file to the ejected array
+
             (*ejected)[num_ejected - 1].pathname = calloc(strlen(table->files_references[available]->file->pathname) + 1,
                                                           sizeof(char));
             if (!(*ejected)[num_ejected - 1].pathname) {
+            	UNLOCK( &cache_mutex )
+    			
                 fmt = "%s\n";
                 write_log(my_log, fmt, "enqueue: Error in (*ejected)[num_ejected - 1].pathname allocation");
-                UNLOCK( &(table->table_mutex) )
                 for (unsigned long int i = 0; i < num_ejected - 1; i++) {
                     free((*ejected)[i].pathname);
                     free((*ejected)[i].content);
@@ -344,9 +360,10 @@ int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct m
             (*ejected)[num_ejected - 1].content = (char*) calloc(table->files_references[available]->file->file_size,
                                                                  sizeof(char));
             if (!(*ejected)[num_ejected - 1].content) {
+            	UNLOCK( &cache_mutex )
+    			
                 fmt = "%s\n";
                 write_log(my_log, fmt, "enqueue: Error in (*ejected)[num_ejected - 1].content allocation");
-                UNLOCK( &(table->table_mutex) )
                 free((*ejected)[num_ejected - 1].pathname);
                 for (unsigned long int i = 0; i < num_ejected - 1; i++) {
                     free((*ejected)[i].pathname);
@@ -374,12 +391,9 @@ int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct m
 
 		}
 
-        LOCK( &(cqueue->queue_mutex) )
-
 	}
 
-    UNLOCK( &(cqueue->queue_mutex) )
-	UNLOCK( &(table->table_mutex) )
+	UNLOCK( &cache_mutex )
 
 	struct cache_node *temp = new_node(file);
 	if (!temp) {
@@ -388,7 +402,9 @@ int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct m
 		return -1;
 	}
 
-	LOCK( &(cqueue->queue_mutex) )
+	LOCK( &cache_mutex )
+
+    // addition at the head of the new node
 
 	temp->next = cqueue->head;
 
@@ -399,11 +415,8 @@ int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct m
         cqueue->head = temp;
 	}
 
-	LOCK( &(table->table_mutex) )
 
 	table->files_references[file->fidx] = temp;
-
-	UNLOCK( &(table->table_mutex) )
 
 	unsigned long int size_to_add = file->file_size;
 	cqueue->curr_files++;
@@ -413,7 +426,7 @@ int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct m
 	if (cqueue->curr_capacity > max_size)
 		max_size = cqueue->curr_capacity;
 
-	UNLOCK( &(cqueue->queue_mutex) )
+	UNLOCK( &cache_mutex )
 
 	return 0;
 }
@@ -421,16 +434,16 @@ int enqueue(struct cache_queue *cqueue, struct cache_hash_table *table, struct m
 void reference_file(struct cache_queue *cqueue, struct cache_hash_table *table, struct my_file *file,
                     struct my_file **ejected, unsigned long int *ejected_dim) {
 
-	LOCK( &(table->table_mutex) )
+	LOCK( &cache_mutex )
 
 	struct cache_node *ref = table->files_references[file->fidx];
 
-	UNLOCK( &(table->table_mutex) )
+	UNLOCK( &cache_mutex )
 
 	if (!ref) 
 		enqueue(cqueue, table, file, ejected, ejected_dim);
 
-	LOCK( &(cqueue->queue_mutex) )
+	LOCK( &cache_mutex )
 
 	if (ref != cqueue->head) {
 
@@ -450,16 +463,16 @@ void reference_file(struct cache_queue *cqueue, struct cache_hash_table *table, 
         cqueue->head = ref;
 	}
 
-	UNLOCK( &(cqueue->queue_mutex) )
+	UNLOCK( &cache_mutex )
 }
 
 int cache_search_file(struct cache_hash_table table, char *filename) {
 
-	LOCK( &(table.table_mutex) )
-
 	unsigned long int fidx = cache_hash( (unsigned char*) filename) % table.capacity;
 
 	int i = 0;
+
+	LOCK( &cache_mutex )
 
 	while (i < table.capacity) {
 
@@ -474,12 +487,12 @@ int cache_search_file(struct cache_hash_table table, char *filename) {
             i++;
         }
         if (i == table.capacity) {
-            UNLOCK ( &(table.table_mutex) )
+            UNLOCK( &cache_mutex )
             return 0;
         }
 
 		if ( strcmp(table.files_references[fidx]->file->pathname, filename) == 0) {
-            UNLOCK ( &(table.table_mutex) )
+            UNLOCK( &cache_mutex )
             return 1;
         }
 		else {
@@ -494,7 +507,7 @@ int cache_search_file(struct cache_hash_table table, char *filename) {
 
 	}
 
-	UNLOCK( &(table.table_mutex) )
+	UNLOCK( &cache_mutex )
 
 	return 0;
 }
@@ -508,9 +521,16 @@ struct my_file *cache_get_file(struct cache_hash_table table, char *filename) {
 		return NULL;
 	}
 
-	LOCK( &(table.table_mutex) )
+	LOCK( &cache_mutex )
 
 	unsigned long int fidx = cache_hash( (unsigned char*) filename) % table.capacity;
+	while (table.files_references[fidx] == NULL) {
+        if (fidx == table.capacity - 1) {
+            fidx = 0;
+            continue;
+        }
+        fidx++;
+    }
     while (strcmp(table.files_references[fidx]->file->pathname, filename) != 0) {
         if (fidx == table.capacity - 1) {
             fidx = 0;
@@ -521,14 +541,14 @@ struct my_file *cache_get_file(struct cache_hash_table table, char *filename) {
 
     struct my_file *temp = table.files_references[fidx]->file;
 
-	UNLOCK( &(table.table_mutex) )
+	UNLOCK( &cache_mutex )
 
 	return temp;
 }
 
 void cache_cleanup(struct cache_hash_table *table, struct cache_queue *cqueue) {
 
-	LOCK( &(cqueue->queue_mutex) )
+	LOCK( &cache_mutex )
 
 	struct cache_node *current = cqueue->head;
 
@@ -544,15 +564,10 @@ void cache_cleanup(struct cache_hash_table *table, struct cache_queue *cqueue) {
 		temp = NULL;
 	}
 
-	UNLOCK( &(cqueue->queue_mutex) )
-	pthread_mutex_destroy( &(cqueue->queue_mutex) );
-
-	LOCK( &(table->table_mutex) )
-
 	free(table->files_references);
 
-	UNLOCK( &(table->table_mutex) )
-	pthread_mutex_destroy( &(table->table_mutex) );
+	UNLOCK( &cache_mutex )
+	pthread_mutex_destroy( &cache_mutex );
 	
 }
 
@@ -565,7 +580,7 @@ int cache_file_append(struct cache_queue *cqueue, struct cache_hash_table *table
 		return -1;
 	}
 
-	LOCK( &(table->table_mutex) )
+	LOCK( &cache_mutex )
 
 	unsigned long int fidx = cache_hash( (unsigned char *) filename ) % table->capacity;
 	while ( strcmp(table->files_references[fidx]->file->pathname, filename) != 0 ) {
@@ -576,9 +591,7 @@ int cache_file_append(struct cache_queue *cqueue, struct cache_hash_table *table
 		fidx++;
 	}
 
-	LOCK( &(cqueue->queue_mutex) )
-
-	struct my_file *temp = table->files_references[fidx]->file;
+	struct my_file *file = table->files_references[fidx]->file;
 
 	unsigned long int num_ejected = 0;
 
@@ -588,70 +601,195 @@ int cache_file_append(struct cache_queue *cqueue, struct cache_hash_table *table
 			fprintf(stderr,
                     "The file %s is the only file in the server and it already uses the full capacity "
                     "of the server. I cannot append more bytes to the file\n", filename);
-            UNLOCK( &(cqueue->queue_mutex) )
-            UNLOCK( &(table->table_mutex) )
+            UNLOCK( &cache_mutex )
 			return -1;
 		}
 
-		while (cqueue->curr_capacity + data_size > cqueue->max_capacity ) {
+		while (cqueue->curr_capacity + data_size > cqueue->max_capacity) {
 
 			unsigned long int available;
-
-            UNLOCK( &(cqueue->queue_mutex) )
 
 			if ((available = dequeue(cqueue)) == -1) {
 				const char *fmt = "%s\n";
 				write_log(my_log, fmt, "cache_file_append: Error during dequeue");
-				UNLOCK( &(table->table_mutex) )
-                UNLOCK( &(cqueue->queue_mutex) )
+				UNLOCK( &cache_mutex )
 				return -1;
 			}
 			else {
 
+                table->files_references[available]->file->is_locked = false;
+
+                UNLOCK( &cache_mutex )
+
 				num_ejected++;
-				if (num_ejected > *ejected_dim) {
 
-					if (*ejected_dim == 0)
-						*ejected_dim = 1;
-					else
-						*ejected_dim *= 2;
+                if (num_ejected > *ejected_dim) {
 
-					*ejected = realloc(*ejected, *ejected_dim);
-					for (unsigned long int i = num_ejected; i < *ejected_dim; i++) {
-						memset(&(*ejected)[i], 0, sizeof(struct my_file));
-					}
+                    if (*ejected_dim == 0)
+                        *ejected_dim = 1;
+                    else
+                        *ejected_dim *= 2;
 
-				}
-				(*ejected)[num_ejected - 1] = *(table->files_references[available]->file);
-				free(table->files_references[available]->file->content);
-				fclose(table->files_references[available]->file->f);
-				free(table->files_references[available]);
-				table->files_references[available] = NULL;
+                    // if no files have already been ejected, I allocate memory to store them
+                    if (!*ejected) {
+                        *ejected = calloc(*ejected_dim, sizeof(struct my_file));
+                        if (!*ejected) {
+                            const char *fmt = "%s\n";
+                            write_log(my_log, fmt, "enqueue: Error in *ejected allocation");
+                            return -1;
+                        }
+                    }
+                    // I need to copy the files ejected so far and allocate new memory
+                    else {
+
+                        struct my_file *temp = *ejected;
+                        *ejected = calloc(*ejected_dim, sizeof(struct my_file));
+                        if (!*ejected) {
+                            const char *fmt = "%s\n";
+                            write_log(my_log, fmt, "enqueue: Error in *ejected re-allocation");
+                            for (unsigned long int i = 0; i < *ejected_dim / 2; i++) {
+                                free(temp[i].pathname);
+                                free(temp[i].content);
+                            }
+                            free(temp);
+                            return -1;
+                        }
+
+                        // the copy of the files ejected up to this moment
+                        for (unsigned long int i = 0; i < *ejected_dim / 2; i++) {
+                            (*ejected)[i].fidx = temp[i].fidx;
+                            (*ejected)[i].file_size = temp[i].file_size;
+                            (*ejected)[i].is_locked = temp[i].is_locked;
+                            (*ejected)[i].pathname = calloc(strlen(temp[i].pathname) + 1, sizeof(char));
+                            if (!(*ejected)[i].pathname) {
+                                const char *fmt = "%s\n";
+                                write_log(my_log, fmt, "enqueue: Error in (*ejected)[i].pathname allocation");
+
+                                // in case of error I need to free the memory of the files copied up to this moment
+                                for (unsigned long int j = 0; j < i; j++) {
+                                    free( (*ejected)[i].pathname );
+                                    free( (*ejected)[i].content );
+                                }
+                                free(*ejected);
+
+                                //in case of error I need to free the memory of the files not yes copied
+                                for (unsigned long int j = i; j < *ejected_dim / 2; j++) {
+                                    free(temp[j].pathname);
+                                    free(temp[j].content);
+                                }
+                                free(temp);
+                                return -1;
+                            }
+                            (*ejected)[i].content = (char*) calloc(temp[i].file_size, sizeof(char));
+                            if (!(*ejected)[i].content) {
+                                const char *fmt = "%s\n";
+                                write_log(my_log, fmt, "enqueue: Error in (*ejected)[i].content allocation");
+
+                                // in case of error I need to free the memory of the files copied up to this moment
+                                for (unsigned long int j = 0; j < i; j++) {
+                                    free( (*ejected)[i].pathname );
+                                    free( (*ejected)[i].content );
+                                }
+                                free( (*ejected)[i].pathname);
+                                free(*ejected);
+
+                                //in case of error I need to free the memory of the files not yes copied
+                                for (unsigned long int j = i; j < *ejected_dim / 2; j++) {
+                                    free(temp[j].pathname);
+                                    free(temp[j].content);
+                                }
+                                free(temp);
+                                return -1;
+                            }
+                            strcpy( (*ejected)[i].pathname, temp[i].pathname );
+                            memcpy( (*ejected)[i].content, temp[i].content, temp[i].file_size );
+                            (*ejected)[i].f = temp[i].f;
+
+                            free(temp[i].pathname);
+                            temp[i].pathname = NULL;
+                            free(temp[i].content);
+                            temp[i].content = NULL;
+                        }
+                        free(temp);
+
+                    }
+
+                }
+                LOCK( &cache_mutex )
+
+                // now I can add the new ejected file to the ejected array
+
+                (*ejected)[num_ejected - 1].pathname = calloc(strlen(table->files_references[available]->file->pathname) + 1,
+                                                              sizeof(char));
+                if (!(*ejected)[num_ejected - 1].pathname) {
+                    UNLOCK( &cache_mutex )
+
+                    const char *fmt = "%s\n";
+                    write_log(my_log, fmt, "enqueue: Error in (*ejected)[num_ejected - 1].pathname allocation");
+                    for (unsigned long int i = 0; i < num_ejected - 1; i++) {
+                        free((*ejected)[i].pathname);
+                        free((*ejected)[i].content);
+                    }
+                    free(ejected);
+                    return -1;
+                }
+                (*ejected)[num_ejected - 1].content = (char*) calloc(table->files_references[available]->file->file_size,
+                                                                     sizeof(char));
+                if (!(*ejected)[num_ejected - 1].content) {
+                    UNLOCK( &cache_mutex )
+
+                    const char *fmt = "%s\n";
+                    write_log(my_log, fmt, "enqueue: Error in (*ejected)[num_ejected - 1].content allocation");
+                    free((*ejected)[num_ejected - 1].pathname);
+                    for (unsigned long int i = 0; i < num_ejected - 1; i++) {
+                        free((*ejected)[i].pathname);
+                        free((*ejected)[i].content);
+                    }
+                    free(ejected);
+                    return -1;
+                }
+                (*ejected)[num_ejected - 1].fidx = table->files_references[available]->file->fidx;
+                (*ejected)[num_ejected - 1].file_size = table->files_references[available]->file->file_size;
+                (*ejected)[num_ejected - 1].is_locked = table->files_references[available]->file->is_locked;
+                strcpy((*ejected)[num_ejected - 1].pathname, table->files_references[available]->file->pathname);
+                (*ejected)[num_ejected - 1].f = table->files_references[available]->file->f;
+                memcpy((*ejected)[num_ejected - 1].content, table->files_references[available]->file->content,
+                       table->files_references[available]->file->file_size);
+
+                free(table->files_references[available]->file->pathname);
+                free(table->files_references[available]->file->content);
+                fclose(table->files_references[available]->file->f);
+                free(table->files_references[available]->file);
+                free(table->files_references[available]);
+                table->files_references[available] = NULL;
+
+                num_replacements++;
 			}
 
-            LOCK( &(cqueue->queue_mutex) )
+            LOCK( &cache_mutex )
 
 		}
 
-		fwrite( (char*) data, sizeof(char), data_size, temp->f );
-		temp->content = realloc(temp->content, temp->file_size + data_size);
-		memcpy( &( ((char**) temp->content)[temp->file_size]), data, data_size );
-		temp->file_size += data_size;
+        UNLOCK( &cache_mutex )
+
+		fwrite( (char*) data, sizeof(char), data_size, file->f );
+		file->content = realloc(file->content, file->file_size + data_size);
+		memcpy( &( ((char**) file->content)[file->file_size]), data, data_size );
+		file->file_size += data_size;
         cqueue->curr_capacity += data_size;
 
 	}
 	else {
 
-		fwrite( (char*) data, sizeof(char), data_size, temp->f );
-		temp->content = realloc(temp->content, temp->file_size + data_size);
-		memcpy( &( ((char**) temp->content)[temp->file_size]), data, data_size );
-		temp->file_size += data_size;
+		fwrite( (char*) data, sizeof(char), data_size, file->f );
+		file->content = realloc(file->content, file->file_size + data_size);
+		memcpy( &( ((char**) file->content)[file->file_size]), data, data_size );
+		file->file_size += data_size;
         cqueue->curr_capacity += data_size;
 
 	}
 
-	UNLOCK( &(table->table_mutex) )
-	UNLOCK( &(cqueue->queue_mutex) )
+	UNLOCK( &cache_mutex )
 
 	return 0;
 }
@@ -659,12 +797,13 @@ int cache_file_append(struct cache_queue *cqueue, struct cache_hash_table *table
 int cache_remove_file(struct cache_hash_table *table, struct cache_queue *cqueue, char *filename) {
 
 	if (!table || !filename) {
+        errno = EINVAL;
 		const char *fmt = "%s table = %p, filename = %p\n";
 		write_log(my_log, fmt, "Error in enqueue parameters:", table, filename);
 		return -1;
 	}
 
-	LOCK( &(table->table_mutex) )
+	LOCK( &cache_mutex )
 
 	unsigned long int fidx = cache_hash( (unsigned char *) filename) % table->capacity;
 	while ( strcmp(table->files_references[fidx]->file->pathname, filename) != 0 ) {
@@ -677,10 +816,6 @@ int cache_remove_file(struct cache_hash_table *table, struct cache_queue *cqueue
 
 	struct cache_node *temp = table->files_references[fidx];
     table->files_references[fidx] = NULL;
-
-    UNLOCK( &(table->table_mutex) )
-
-    LOCK( &(cqueue->queue_mutex) )
 
     if (temp == cqueue->head) {
         cqueue->head = temp->next;
@@ -697,7 +832,7 @@ int cache_remove_file(struct cache_hash_table *table, struct cache_queue *cqueue
     free(temp->file);
     free(temp);
 
-    UNLOCK( &(cqueue->queue_mutex) )
+    UNLOCK( &cache_mutex )
 
 	return 0;
 	
