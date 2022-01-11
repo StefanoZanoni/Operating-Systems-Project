@@ -1,22 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
-
 #include <stdio.h>
-#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <unistd.h>
-#include <pthread.h>
-#include <ctype.h>
 #include <sys/select.h>
-#include <sys/time.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
 
 #include "../../headers/client/client.h"
-#include "../../headers/client/queue.h"
-#include "../API/api.h"
+#include "../../src/API/api.h"
 #include "../../headers/client/parsing.h"
 #include "../../headers/client/commands_execution.h"
 
@@ -45,11 +34,6 @@ static void free_arg(commandline_arg_t *arg) {
 	}
 }
 
-/*
-	* This function is used either in case of error or in case of client termination
-	* to clean up: the queue, the terminal current argument, the reading directory,
-	* the writing directory, the sockname and to close the connection with the server.
-*/
 void client_cleanup(argsQueue_t *queue, commandline_arg_t *curr_arg) {
 
 	if (queue) {
@@ -102,8 +86,6 @@ int main(int argc, char **argv) {
 		exit(EXIT_FAILURE);
 	}
 
-	clock_t begin = clock();
-
 	memset(&time_to_wait, 0, sizeof(struct timespec));
 
 	argsQueue_t queue;
@@ -117,7 +99,7 @@ int main(int argc, char **argv) {
 
 		argnode_t *command_to_execute = NULL;
 		command_to_execute = dequeue(&queue);
-		int retval = execute_command( *(command_to_execute->arg) );
+		int	retval = execute_command( *(command_to_execute->arg) );
 		free(command_to_execute->arg);
 		free(command_to_execute);
 		if (retval == -1) {
@@ -131,10 +113,6 @@ int main(int argc, char **argv) {
 	}
 
 	client_cleanup(&queue, NULL);
-
-	clock_t end = clock();
-    double time_spent = (double) (end - begin) / CLOCKS_PER_SEC;
-    printf("%lf\n\n", time_spent);
 
 	return 0;
 }

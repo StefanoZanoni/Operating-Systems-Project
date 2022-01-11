@@ -1,7 +1,5 @@
-#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <string.h>
 
 #include "../../common/util.h"
@@ -49,10 +47,38 @@ static argnode_t* opt_research(argsQueue_t *queue, char opt) {
 	return NULL;
 }
 
-// -h -> -p -> -f -> -t -> -D -> -d -> any other option
+// -h -> -p -> -f -> -t -> -D -> -d -> -W -> -w -> -l -> -r -> -R -> -u -> -c
 void queue_sorting(argsQueue_t *queue) {
 
 	argnode_t *to_move = NULL;
+
+	if ( (to_move = opt_research(queue, 'c')) ) 
+		if (!is_at_the_head(queue, to_move)) 
+			move_to_the_head(queue, to_move);
+
+	if ( (to_move = opt_research(queue, 'u')) )
+		if (!is_at_the_head(queue, to_move)) 
+			move_to_the_head(queue, to_move);
+
+    if ( (to_move = opt_research(queue, 'R')) )
+        if (!is_at_the_head(queue, to_move))
+            move_to_the_head(queue, to_move);
+
+    if ( (to_move = opt_research(queue, 'r')) )
+        if (!is_at_the_head(queue, to_move))
+            move_to_the_head(queue, to_move);
+
+    if ( (to_move = opt_research(queue, 'l')) )
+        if (!is_at_the_head(queue, to_move))
+            move_to_the_head(queue, to_move);
+
+    if ( (to_move = opt_research(queue, 'w')) )
+        if (!is_at_the_head(queue, to_move))
+            move_to_the_head(queue, to_move);
+
+	if ( (to_move = opt_research(queue, 'W')) )
+		if (!is_at_the_head(queue, to_move))
+			move_to_the_head(queue, to_move);
 
 	if ( (to_move = opt_research(queue, 'd')) ) 
 		if (!is_at_the_head(queue, to_move)) 
@@ -85,42 +111,7 @@ void queue_sorting(argsQueue_t *queue) {
 	if (opt_research(queue, 'r') || opt_research(queue, 'R')) 
 		if (!opt_research(queue, 'd'))
 			fprintf(stderr, "Warning: no folder was specified to store the files read by the server.\nRead files will not be stored on disk.\n");
-}
 
-void print_queue(argsQueue_t queue) {
-
-	if (queue.head == NULL)
-		fprintf(stderr, "Empty queue\n");
-
-	argnode_t *curr = queue.head;
-
-	while (curr != NULL) {
-
-		if (curr->arg != NULL) {
-
-			printf("-%c ", curr->arg->option);
-
-			if (curr->arg->args != NULL) {
-
-				int i = 0;
-				while (curr->arg->args[i] != NULL) {
-
-					if (curr->arg->args[i + 1] != NULL) 
-						printf("%s,", curr->arg->args[i]);
-					else
-						printf("%s", curr->arg->args[i]);
-
-					i++;
-
-				}
-
-			}
-		}
-		
-		printf("\n");
-
-		curr = curr->next;
-	}
 }
 
 int is_queue_empty(argsQueue_t queue) {
@@ -142,9 +133,9 @@ void enqueue(argsQueue_t *queue, commandline_arg_t *curr_arg) {
 	if (queue->head == NULL) {
 
 		queue->head = calloc(1, sizeof(argnode_t));
-		CHECK_EQ_EXIT(client_cleanup(queue, curr_arg), "queue.c calloc", queue->head, NULL, "queue->head\n", "");
+		CHECK_EQ_EXIT(client_cleanup(queue, curr_arg), "queue.c calloc", queue->head, NULL, "queue->head\n", "")
 		queue->head->arg = calloc(1, sizeof(commandline_arg_t));
-		CHECK_EQ_EXIT(client_cleanup(queue, curr_arg), "queue.c calloc", queue->head->arg, NULL, "queue->head->arg\n", "");
+		CHECK_EQ_EXIT(client_cleanup(queue, curr_arg), "queue.c calloc", queue->head->arg, NULL, "queue->head->arg\n", "")
 		memcpy(queue->head->arg, curr_arg, sizeof(commandline_arg_t));
 		queue->head->next = NULL;
 		queue->tail = queue->head;
@@ -153,10 +144,10 @@ void enqueue(argsQueue_t *queue, commandline_arg_t *curr_arg) {
 	else {
 
 		queue->tail->next = calloc(1, sizeof(argnode_t));
-		CHECK_EQ_EXIT(client_cleanup(queue, curr_arg), "queue.c calloc", queue->tail->next, NULL, "queue->tail->next\n", "");
+		CHECK_EQ_EXIT(client_cleanup(queue, curr_arg), "queue.c calloc", queue->tail->next, NULL, "queue->tail->next\n", "")
 		queue->tail = queue->tail->next;
 		queue->tail->arg = calloc(1, sizeof(commandline_arg_t));
-		CHECK_EQ_EXIT(client_cleanup(queue, curr_arg), "queue.c calloc", queue->tail->arg, NULL, "queue->tail->arg\n", "");
+		CHECK_EQ_EXIT(client_cleanup(queue, curr_arg), "queue.c calloc", queue->tail->arg, NULL, "queue->tail->arg\n", "")
 		memcpy(queue->tail->arg, curr_arg, sizeof(commandline_arg_t));
 		queue->tail->next = NULL;
 
@@ -172,7 +163,7 @@ argnode_t* dequeue(argsQueue_t *queue) {
 	else {
 
 		argnode_t *temp = calloc(1, sizeof(argnode_t));
-		CHECK_EQ_EXIT(client_cleanup(queue, NULL), "queue.c calloc", temp, NULL, "temp\n", "");
+		CHECK_EQ_EXIT(client_cleanup(queue, NULL), "queue.c calloc", temp, NULL, "temp\n", "")
 		memcpy(temp, queue->head, sizeof(argnode_t));
 
 		argnode_t *aux = queue->head;
