@@ -7,10 +7,13 @@
 #include "../../common/util.h"
 #include "../../headers/server/configuration.h"
 
-/*
-    * this function is used to free the memory in case of error
-    * or at the end of configuration file reading
-*/
+/**
+ * This function is used to free the memory in case of error
+ * or at the end of configuration file reading
+ *
+ * @param vectors allocated vectors
+ * @param config configuration file
+ */
 static void config_cleanup(char **vectors, FILE *config) {
 
     if (vectors) {
@@ -43,11 +46,6 @@ static void config_cleanup(char **vectors, FILE *config) {
         fclose(config);
 }
 
-/*
-    * this function is used to read the configuration file and save the configuration parameters 
-    * into the server_configuration structure.
-    * The configuration file is read line by line. 
-*/
 void get_config(const char *path, server_configuration_t *configuration) {
 
     if (!path || !configuration) {
@@ -72,7 +70,7 @@ void get_config(const char *path, server_configuration_t *configuration) {
     char *line = NULL;
     int n = 0;
 
-    //informations is used to store the string before the actual server configuration data 
+    //information is used to store the string before the actual server configuration data
     char *informations = calloc(BUFSIZE, sizeof(char));
     CHECK_EQ_EXIT(config_cleanup(vectors, config), "calloc config.c", informations, NULL, "informations\n", "")
     vectors[3] = informations;
