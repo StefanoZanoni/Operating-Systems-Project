@@ -20,15 +20,16 @@ sleep 2s
 #"client 1 --------------------------------------------------------------------------------------------"
 $clientpath   	-f $socketname \
  				-p \
- 				-w data/test1 \
- 				-r data/test3/Calcolo-numerico/lezioni/CN-2021-02-17.pdf \
  				-D removed \
  				-d read \
+ 				-W data/test1/wallpaper_4k_uhd_19_20210223_2064369960.jpg \
+ 				-w data/test3 \
+ 				-r data/test3/Calcolo-numerico/lezioni/CN-2021-02-24.pdf \
  				-l data/test1/progettosol-20_21.pdf,data/test1/478479.jpg \
  				-u data/test1/progettosol-20_21.pdf,data/test1/478479.jpg \
  				-c data/test1/Elakala-waterfalls-vertical.jpg \
   				-t 200 \
-  				-R 0 &	
+  				-R 0 &
 pid1=$!
 
 
@@ -36,12 +37,12 @@ pid1=$!
 $clientpath		-f $socketname \
  				-p \
   				-D removed \
-  				-w data/test2 \
-  				-W data/test3/Calcolo-numerico/lezioni/CN-2021-02-19.pdf \
-  				-r data/test3/Calcolo-numerico/lezioni/CN-2021-02-19.pdf \
   				-d read \
+  				-W data/test1/images.jpeg \
+  				-w data/test2 \
+  				-r data/test3/Calcolo-numerico/lezioni/CN-2021-03-03.pdf \
   				-c data/test1/Elakala-waterfalls-vertical.jpg \
-  				-l data/test1/progettosol-20_21.pdf,data/test1/Elakala-waterfalls-vertical.jpg \
+  				-l data/test1/images.jpeg \
   				-u data/test1/progettosol-20_21.pdf,data/test1/Elakala-waterfalls-vertical.jpg \
   				-t 200 \
   				-R 4 &
