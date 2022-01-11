@@ -11,7 +11,7 @@
 #include "../../common/client_server.h"
 #include "../../headers/client/client.h"
 #include "../../headers/client/errors.h"
-#include "api.h"
+#include "./api.h"
 
 static int send_command(server_command_t command) {
 
@@ -127,6 +127,10 @@ static int get_outcome(server_outcome_t *outcome) {
 	return 0;
 }
 
+/*
+ * this function is used to write the files ejected from the server
+ * in the directory specified in the "dirname" parameter
+ */
 static int write_inside_dir(const char *dirname, char *filepath, void *data, size_t data_size) {
 
 	if (filepath != NULL) {
@@ -135,6 +139,7 @@ static int write_inside_dir(const char *dirname, char *filepath, void *data, siz
 
 	        size_t dirlen = strlen(dirname) + 1;
 
+            //filename contains the name of the file, not its absolute path
 	        char *filename = basename(filepath);
 	        if (!filename)
 	            return -1;
@@ -162,11 +167,6 @@ static int write_inside_dir(const char *dirname, char *filepath, void *data, siz
 	return 0;
 }
 
-/*
-	* This function is used to connect the client to the socket specified by sockname.
-	* If a connection attempt fails, the client retries after msec milliseconds and 
-	* for a maximum of abstime seconds.
-*/
 int openConnection(const char *sockname, int msec, const struct timespec abstime) {
 
 	struct timespec ts;
@@ -193,10 +193,14 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
 
 		errno = 0;
 		if ( connect(sockfd, (struct sockaddr*) &sa, sizeof(sa)) == -1) {
+
 			int retval;
+
+            // interruptions from signals do not exhaust the waiting time
 			do {
 				retval = nanosleep(&ts, &ts); 
 			} while (retval && errno == EINTR);
+
 		}
 		else 
 			break;
@@ -213,9 +217,6 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
 	return 0;
 }
 
-/*
-	* This function is used to close the connection with the socket
-*/
 int closeConnection(const char *sockname) {
 
 	int retval;
@@ -261,11 +262,6 @@ int openFile(const char *pathname, int flags) {
 	return 0;
 }
 
-/*
-	* This function is used to read an entire file from the server.
-	* All the content of the file is stored in the buf parameter
-	* and the dimension of the buf is stored in size parameter (bytes dimension of the file).
-*/
 int readFile(const char *pathname, void **buf, size_t *size) {
 
 	int retval;
@@ -294,10 +290,6 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 	return 0;
 }
 
-/*
-	* This function is used to read any N files from the server.
-	* If N is undefined or 0, then all files stored in the server are read.
-*/
 int readNFiles(int N, const char *dirname) {
 
 	int retval;
@@ -386,10 +378,6 @@ int writeFile(const char *pathname, const char *dirname) {
 	return 0;
 }
 
-/*
-	* This function is used to add the size bytes of the buf pointer to the file pointed to by pathname.
-	* If dirname is not equal to NULL, any files ejected from the server will be stored in dirname. 
-*/
 int appendToFile(const char *pathname, void *buf, size_t size, const char *dirname) {
 
 	int retval;
@@ -427,10 +415,6 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char *dirna
 	return 0;	
 }
 
-/*
-	* This is function is used by the client to request the acquisition of the lock on
-	* the file pointed to by pathname.
-*/
 int lockFile(const char *pathname) {
 
 	int retval;
@@ -454,10 +438,6 @@ int lockFile(const char *pathname) {
 	return 0;
 }
 
-/*
-	* This is function is used by the client to request the release of the lock on
-	* the file pointed to by pathname.
-*/
 int unlockFile(const char *pathname) {
 
 	int retval;
@@ -481,10 +461,6 @@ int unlockFile(const char *pathname) {
 	return 0;
 }
 
-/*
-	* This is function is used by the client to request the closing
-	* of the file pointed to by pathname.
-*/
 int closeFile(const char *pathname) {
 
 	int retval;
@@ -508,10 +484,6 @@ int closeFile(const char *pathname) {
 	return 0;
 }
 
-/*
-	* This is function is used by the client to request the removing
-	* of the file pointed to by pathname.
-*/
 int removeFile(const char *pathname) {
 
 	int retval;
