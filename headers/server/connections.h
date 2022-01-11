@@ -1,106 +1,84 @@
-#ifndef PROGETTOSOL_CONNECTIONS_H
-#define PROGETTOSOL_CONNECTIONS_H
+#ifndef PROGETTOSOL_FILES_LIST_H
+#define PROGETTOSOL_FILES_LIST_H
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <pthread.h>
 
-#include "files_list.h"
+#include "cache.h"
 
-#define INITIAL_CAPACITY 4096
+struct references_list {
 
-struct conn_elem {
-
-	int client;
-	struct conn_flist *list;
-	bool taken;
+	struct references_list *prev,
+						   *next;
+	struct my_file *file;
 
 };
 
-struct conn_hash_table {
+struct conn_flist {
 
-	pthread_mutex_t table_mutex;
+    pthread_mutex_t conn_list_mutex;
+    struct references_list *clist;
 
-	unsigned long int dim;
-	unsigned long int current_dim;
-	struct conn_elem *clients;
-	
 };
 
-extern struct conn_hash_table conn_table;
+extern struct references_list *flist;
+extern pthread_mutex_t flist_mutex;
 
 /**
- * This function is used to initialize the connections hash table
+ * This function is used to add a file to a doubly linked list
  *
- * @param table hash table
- *
- * @return -1 error (errno set)
- * @return 0 success
- */
-int initialize_conn_hash_table(struct conn_hash_table *table);
-
-/**
- * This function is used to insert a new client in the hash table
- *
- * @param client new client
- * @param table hash table
- *
- * @return -1 error (errno set)
- * @return 0 success
- */
-int insert_client(int client, struct conn_hash_table *table);
-
-/**
- * This function is used to remove a client previously connected
- *
- * @param table hash table
- * @param client client to remove
- *
- * @return -1 error (errno set)
- * @return 0 success
- */
-int remove_client(struct conn_hash_table *table, int client);
-
-/**
- * This function is used to add a file to the client's locked files list
- *
- * @param client the current client
- * @param table hash table
+ * @param list doubly linked list
  * @param file the file to add
+ * @param mutex the mutex of the current list
  *
  * @return -1 error (errno set)
  * @return 0 success
  */
-int conn_hash_table_add_file(int client, struct conn_hash_table *table, struct my_file *file);
+int files_list_add(struct references_list **list, struct my_file *file, pthread_mutex_t *mutex);
 
 /**
- * This function is used to remove a file from the client's locked files list
+ * This function is used to remove a file from a doubly linked list
  *
- * @param client the current client
- * @param table hash table
+ * @param list doubly linked list
  * @param file the file to remove
+ * @param mutex the mutex of the current list
  *
  * @return -1 error (errno set)
  * @return 0 success
  */
-int conn_hash_table_remove_file(int client, struct conn_hash_table *table, struct my_file file);
+int files_list_remove(struct references_list **list, struct my_file file, pthread_mutex_t *mutex);
 
 /**
- * This function is used to clean up the connections hash table
+ * This function is used to search a file into the list
  *
- * @param table hash table
+ * @param list doubly linked list
+ * @param filename the absolute path of the file
+ * @param mutex the mutex of the current list
+ *
+ * @return -1 error (errno set)
+ * @return 0 if the file is not present in the list
+ * @return 1 otherwise
  */
-void conn_hash_table_cleanup(struct conn_hash_table *table);
+int files_list_search_file(struct references_list *list, char *filename, pthread_mutex_t *mutex);
 
 /**
- * This function is used to get the client's locked files list
+ * This function is used to get a specific file from the list
  *
- * @param client the current client
- * @param table hash table
+ * @param list doubly linked list
+ * @param filename the absolute path of the file
+ * @param mutex the mutex of the current list
  *
  * @return NULL error (errno set)
- * @return current client's locked files list success
+ * @return searched file success
  */
-struct references_list *get_client_list(int client, struct conn_hash_table table);
+struct my_file *files_list_get_file(struct references_list *list, char *filename,
+                                    pthread_mutex_t *mutex);
 
-#endif //PROGETTOSOL_CONNECTIONS_H
+/**
+ * This function is used to clean up the list
+ *
+ * @param list doubly linked list
+ * @param mutex the mutex of the current list
+ */
+void files_list_cleanup(struct references_list **list, pthread_mutex_t *mutex);
+
+#endif //PROGETTOSOL_FILES_LIST_H
