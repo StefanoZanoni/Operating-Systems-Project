@@ -30,10 +30,58 @@ struct tpool {
 
 } ;
 
+/**
+ * This function is used to create a work for the threadpool
+ *
+ * @param thread_num number of threads
+ * @param threads pthread_t vector to store all thread IDs
+ *
+ * @return NULL error (errno set)
+ * @return work success
+ */
 struct tpool *tpool_create(size_t thread_num, pthread_t **threads);
+
+/**
+ * This function is used to clean up the threadpool
+ *
+ * @param tp threadpool
+ * @param force exit status
+ * @param threads thread IDs
+ * @param thread_num number of threads
+ *
+ * @return -1 error (errno set)
+ * @return 0 success
+ */
 int tpool_destroy(struct tpool *tp, int force, pthread_t *threads, size_t thread_num);
+
+/**
+ * This function is used to add a work to the threadpool
+ *
+ * @param tp threadpool
+ * @param request the current request
+ * @param client the client that made the current request
+ * @param workers_pipe_wfd file descriptor of the pipe write entry
+ *
+ * @return -1 error (errno set)
+ * @return 0 success
+ */
 int tpool_add_work(struct tpool *tp, server_command_t request, int client, int workers_pipe_wfd);
+
+/**
+ * This function is used to wait the termination of all threads
+ *
+ * @param tp threadpool
+ */
 void tpool_wait(struct tpool *tp);
+
+/**
+ * This function is used to check if the works list is empty
+ *
+ * @param tp threadpool
+ *
+ * @return 1 if the list is empty
+ * @return 0 otherwise
+ */
 int tpool_list_is_empty(struct tpool tp);
 
 #endif //PROGETTOSOL_THREADPOOL_H
