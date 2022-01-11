@@ -5,7 +5,6 @@
 #include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <ctype.h>
 #include <sys/select.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -43,7 +42,8 @@ static int workers_pipe[2];
 static pthread_t *threads;
 static size_t thread_num = 0;
 
-clock_t begin;
+static unsigned long int max_conn = 0;
+static unsigned long int curr_conn = 0;
 
 void server_cleanup() {
 
@@ -79,21 +79,18 @@ void server_cleanup() {
         }
     free(threads);
 
+    const char *fmt = "Maximum number of simultaneous connections: %ld\n";
+    write_log(my_log, fmt, max_conn);
+
     if (my_log) {
-        const char *fmt = "%s\n\n\n";
+        fmt = "%s\n\n\n";
         write_log(my_log, fmt, "Server cleanup finished successfully");
         fclose(my_log);
     }
 
-    clock_t end = clock();
-    double time_spent = (double) (end - begin) / CLOCKS_PER_SEC;
-    printf("\nServer execution time: %lfs\n\n", time_spent);
-
 }
 
 int main(int argc, char **argv) {
-
-    begin = clock();
 
     int retval;
     signal_pipe[0] = -1;
@@ -115,7 +112,7 @@ int main(int argc, char **argv) {
 
     my_log = start_log(configuration.logpath);
 
-    //I check the value of my_log here to clean either sockname and logpath in case of error
+    // I check the value of my_log here to clean either sockname and logpath in case of error
     CHECK_EQ_EXIT(server_cleanup(), "start_my_log my_log.c", my_log, NULL, "fopen\n", "")
 
     const char *fmt = "%s\nnum_workers = %d\nnum_files = %d\nstorage_capacity = %d\nsockname = %s\nmy_logpath = %s\n\n-----------------------------------------------------------------------\n";
@@ -129,12 +126,12 @@ int main(int argc, char **argv) {
     fmt = "%s\n";
     write_log(my_log, fmt, "cache initialized successfully");
 
-    //threadpool creation
+    // threadpool creation
     thread_num = configuration.num_workers;
     threads = calloc(thread_num, sizeof(pthread_t));
     tp = tpool_create(thread_num, &threads);
     if (!tp) {
-        fprintf(stderr, "Fatal error on threadpool creation\n");
+        write_log(my_log, "Fatal error on threadpool creation");
         server_cleanup();
         exit(EXIT_FAILURE);
     }
@@ -192,8 +189,8 @@ int main(int argc, char **argv) {
         nfds = workers_pipe[0];
 
     retval = initialize_conn_hash_table(&conn_table);
-    if (retval == -1) { 
-        fprintf(stderr, "Fatal error while initializing connections hash table");
+    if (retval == -1) {
+        write_log(my_log, "Fatal error while initializing connections hash table");
         server_cleanup();
         exit(EXIT_FAILURE);
     }
@@ -225,6 +222,10 @@ int main(int argc, char **argv) {
                         server_cleanup();
                         exit(EXIT_FAILURE);
                     }
+
+                    curr_conn++;
+                    if (curr_conn > max_conn)
+                        max_conn = curr_conn;
                     
                 }
                 else {
@@ -258,7 +259,7 @@ int main(int argc, char **argv) {
 
                     }
 
-                    // a worker thread has finished its work and I can hear the sent descriptor again
+                    // a worker thread has finished its work, and I can hear the sent descriptor again
                     else if (i == workers_pipe[0]) {
 
                         int fd = -1;
@@ -294,6 +295,7 @@ int main(int argc, char **argv) {
                             if (request.filepath)
                                 free(request.filepath);
                             close(i);
+                            curr_conn--;
                             fmt = "Client %d disconnected from the server\n";
                             write_log(my_log, fmt, i);
                             struct references_list *client_list = get_client_list(i, conn_table);
