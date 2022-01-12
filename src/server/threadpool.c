@@ -9,6 +9,9 @@
 #include "../../headers/server/threadpool.h"
 #include "../../headers/server/requests.h"
 
+static int tid=0;
+pthread_mutex_t tid_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static struct tpool_work *tpool_work_create(server_command_t request, int client, int workers_pipe_wfd) {
 
 	struct tpool_work *work;
@@ -63,6 +66,12 @@ static void *tpool_worker(void *arg) {
 
 	struct tpool *tp = (struct tpool*) arg;
 	struct tpool_work *work = NULL;
+	int my_tid;
+
+	LOCK ( &tid_mutex )
+	tid++;
+	my_tid = tid;
+	UNLOCK( &tid_mutex )
 
 	while (1) {
 
@@ -93,13 +102,12 @@ static void *tpool_worker(void *arg) {
 
 		// execution of parallel works
 		if (work != NULL) {
-            long tid = (long) pthread_self();
 			if (work->f(work->request, work->client, work->workers_pipe_wfd) == -1) {
-				const char *fmt = "Thread [%ld]: error while executing command no. %d on client %d\n";
-				write_log(my_log, fmt, tid, (work->request).cmd, work->client);
+				const char *fmt = "Thread %d: error while executing command no. %d on client %d\n";
+				write_log(my_log, fmt, my_tid, (work->request).cmd, work->client);
 			}
-            const char *fmt = "Thread [%ld]: command no. %d executed on client %d\n";
-            write_log(my_log, fmt, tid, (work->request).cmd, work->client);
+            const char *fmt = "Thread %d: command no. %d executed on client %d\n";
+            write_log(my_log, fmt, my_tid, (work->request).cmd, work->client);
             free(work->request.filepath);
             if (work->request.data)
                 free(work->request.data);
