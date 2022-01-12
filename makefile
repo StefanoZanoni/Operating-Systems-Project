@@ -36,6 +36,7 @@ test2: client.out server.out clean
 
 test3: client.out server.out clean
 	scripts/test3.sh
+	scripts/statistics.sh
 
 clean:
 	rm -f ./src/API/api.o
